@@ -32,7 +32,7 @@ services:
     environment:
       - SECRET_KEY=django-insecure-detache-secret-key-development
       - DEBUG=True
-      - ALLOWED_HOSTS=127.0.0.1,localhost,host.docker.internal
+      - ALLOWED_HOSTS=127.0.0.1,localhost,host.docker.internal,157.245.82.247
       - CORS_ALLOW_ALL_ORIGINS=True
       - DB_ENGINE=django.db.backends.postgresql
       - DB_NAME=detache_db
