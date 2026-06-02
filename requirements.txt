@@ -54,6 +54,8 @@ typing_extensions==4.15.0
 uritemplate==4.2.0
 urllib3==2.6.3
 websockets==15.0.1
+whitenoise==6.6.0
+
 
 # Added for containerization and Postgres support
 psycopg2-binary>=2.9.9
