@@ -20,10 +20,10 @@ class HomepageContent(models.Model):
     """Singleton model – only one row ever exists (id=1)."""
     # Hero
     hero_image = models.CharField(max_length=500, default='/images/piano-hero.png')
-    hero_title_1 = models.CharField(max_length=255, default='Detaché:')
-    hero_title_highlight = models.CharField(max_length=255, default='El Arte')
-    hero_title_2 = models.CharField(max_length=255, default='de Dominar la música')
-    hero_subtitle = models.TextField(default='Eleva tu técnica y sensibilidad artística con formación de primer nivel.')
+    hero_title_1 = models.CharField(max_length=255, default='')
+    hero_title_highlight = models.CharField(max_length=255, default='')
+    hero_title_2 = models.CharField(max_length=255, default='')
+    hero_subtitle = models.TextField(default='')
     hero_cta1_text = models.CharField(max_length=100, default='Solicitar Clase de Prueba')
     hero_cta1_link = models.CharField(max_length=200, default='/book')
     hero_cta2_text = models.CharField(max_length=100, default='Nuestros Maestros')
@@ -45,8 +45,8 @@ class HomepageContent(models.Model):
     # Location
     location_title = models.CharField(max_length=255, default='Estamos cerca de ti')
     location_description = models.TextField(default='Nuestra academia se encuentra en un punto estratégico.')
-    location_address = models.CharField(max_length=255, default='Av. Música 123, Piso 2, Providencia')
-    location_address_detail = models.CharField(max_length=255, default='A pasos de Metro Salvador')
+    location_address = models.CharField(max_length=255, default='Gran Avenida José Miguel Carrera 8520, Of. C, La Cisterna')
+    location_address_detail = models.CharField(max_length=255, default='A pasos de Metro La Cisterna')
     location_map_url = models.CharField(max_length=500, default='https://maps.google.com')
 
     # Final CTA
@@ -80,6 +80,16 @@ class HomepageContent(models.Model):
             ]
         })
         return obj
+
+def normalize_phone(phone):
+    if not phone:
+        return phone
+    cleaned = "".join(c for c in phone if c.isdigit())
+    if cleaned.startswith("56") and len(cleaned) == 11:
+        return cleaned
+    if len(cleaned) == 9:
+        return f"56{cleaned}"
+    return cleaned
 
 # ─── CRM (LEADS) ───
 
@@ -125,6 +135,10 @@ class Lead(models.Model):
     def __str__(self):
         return f"{self.nombre} - {self.estado}"
 
+    def save(self, *args, **kwargs):
+        self.telefono = normalize_phone(self.telefono)
+        super().save(*args, **kwargs)
+
 class LeadNote(models.Model):
     lead = models.ForeignKey(Lead, related_name='notas', on_delete=models.CASCADE)
     texto = models.TextField()
@@ -159,6 +173,11 @@ class Teacher(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if self.phone_number:
+            self.phone_number = normalize_phone(self.phone_number)
+        super().save(*args, **kwargs)
 
 class Availability(models.Model):
     DAYS_CHOICES = [
@@ -205,6 +224,13 @@ class Student(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if self.phone_number:
+            self.phone_number = normalize_phone(self.phone_number)
+        if self.guardian_phone:
+            self.guardian_phone = normalize_phone(self.guardian_phone)
+        super().save(*args, **kwargs)
 
 class Instrument(models.Model):
     name = models.CharField(max_length=255, unique=True)
