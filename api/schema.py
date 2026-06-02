@@ -1,13 +1,14 @@
 import graphene
+from django.utils import timezone
 from graphene_django import DjangoObjectType
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent
 
 # --- Object Types ---
 
 class TeacherType(DjangoObjectType):
     class Meta:
         model = Teacher
-        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities")
+        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number")
 
     def resolve_photo(self, info):
         if self.photo:
@@ -27,12 +28,27 @@ class AvailabilityType(DjangoObjectType):
 class StudentType(DjangoObjectType):
     class Meta:
         model = Student
-        fields = ("id", "name", "photo", "status")
+        fields = ("id", "name", "photo", "status", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "private_notes", "wall_messages", "packs")
 
     def resolve_photo(self, info):
         if self.photo:
             return info.context.build_absolute_uri(self.photo.url)
         return None
+
+class MaterialType(DjangoObjectType):
+    class Meta:
+        model = Material
+        fields = ("id", "title", "type", "url", "teacher", "created_at")
+
+class StudentPrivateNoteType(DjangoObjectType):
+    class Meta:
+        model = StudentPrivateNote
+        fields = ("id", "student", "text", "author", "created_at")
+
+class StudentWallMessageType(DjangoObjectType):
+    class Meta:
+        model = StudentWallMessage
+        fields = ("id", "student", "text", "author", "attached_material", "created_at")
 
 class InstrumentType(DjangoObjectType):
     class Meta:
@@ -47,12 +63,61 @@ class RoomType(DjangoObjectType):
 class LessonType(DjangoObjectType):
     class Meta:
         model = Lesson
-        fields = ("id", "teacher", "student", "room", "date", "start_time", "end_time", "status", "lesson_type")
+        fields = ("id", "teacher", "student", "room", "date", "start_time", "end_time", "status", "lesson_type", "is_pre_reservation")
 
 class PlanType(DjangoObjectType):
     class Meta:
         model = Plan
-        fields = ("id", "name", "price", "duration")
+        fields = ("id", "name", "price", "duration", "classes_count", "is_featured")
+    
+    price = graphene.String()
+
+    def resolve_price(self, info):
+        return str(self.price)
+
+class LeadType(DjangoObjectType):
+    class Meta:
+        model = Lead
+        fields = ("id", "nombre", "telefono", "email", "edad", "servicio", "fuente", "estado", "asignado_a", "fecha_ingreso", "fecha_ultimo_contacto", "notas")
+
+class LeadNoteType(DjangoObjectType):
+    class Meta:
+        model = LeadNote
+        fields = ("id", "lead", "texto", "autor", "fecha")
+
+class StudentPackType(DjangoObjectType):
+    class Meta:
+        model = StudentPack
+        fields = ("id", "student", "plan", "total_classes", "remaining_classes", "purchase_date", "expiration_date", "is_active", "payments")
+
+class PaymentType(DjangoObjectType):
+    class Meta:
+        model = Payment
+        fields = ("id", "student", "amount", "payment_date", "method", "description", "pack")
+
+class AcademyTaskType(DjangoObjectType):
+    class Meta:
+        model = AcademyTask
+        fields = ("id", "title", "description", "assigned_to", "priority", "log", "is_completed", "created_at", "updated_at")
+
+class LandingPageType(DjangoObjectType):
+    class Meta:
+        model = LandingPage
+        fields = ("id", "slug", "title", "subtitle", "problem", "solution", "benefits", "image_url", "cta")
+
+class HomepageContentType(DjangoObjectType):
+    class Meta:
+        model = HomepageContent
+        fields = (
+            "id",
+            "hero_image", "hero_title_1", "hero_title_highlight", "hero_title_2",
+            "hero_subtitle", "hero_cta1_text", "hero_cta1_link", "hero_cta2_text", "hero_cta2_link",
+            "features",
+            "method_badge", "method_title", "method_description", "method_items", "method_image",
+            "testimonials",
+            "location_title", "location_description", "location_address", "location_address_detail", "location_map_url",
+            "final_cta_title", "final_cta_description", "final_cta_button_text",
+        )
 
 # --- Queries ---
 
@@ -78,6 +143,24 @@ class Query(graphene.ObjectType):
     # Plans
     all_plans = graphene.List(PlanType)
     plan_by_id = graphene.Field(PlanType, id=graphene.Int(required=True))
+
+    # Leads
+    all_leads = graphene.List(LeadType)
+    lead_by_id = graphene.Field(LeadType, id=graphene.Int(required=True))
+
+    # Student Packs & Payments
+    all_student_packs = graphene.List(StudentPackType)
+    all_payments = graphene.List(PaymentType)
+    all_academy_tasks = graphene.List(AcademyTaskType)
+    all_instruments = graphene.List(InstrumentType)
+    all_materials = graphene.List(MaterialType)
+    
+    # Landing Pages
+    all_landing_pages = graphene.List(LandingPageType)
+    landing_page_by_slug = graphene.Field(LandingPageType, slug=graphene.String(required=True))
+
+    # Homepage
+    homepage_content = graphene.Field(HomepageContentType)
 
     def resolve_hello(self, info):
         return "Hello, this is the Detache backend with GraphQL!"
@@ -111,6 +194,36 @@ class Query(graphene.ObjectType):
 
     def resolve_plan_by_id(self, info, id):
         return Plan.objects.filter(pk=id).first()
+
+    def resolve_all_leads(self, info):
+        return Lead.objects.all()
+        
+    def resolve_lead_by_id(self, info, id):
+        return Lead.objects.filter(pk=id).first()
+
+    def resolve_all_student_packs(self, info):
+        return StudentPack.objects.all()
+
+    def resolve_all_instruments(self, info):
+        return Instrument.objects.all()
+
+    def resolve_all_payments(self, info):
+        return Payment.objects.all()
+
+    def resolve_all_academy_tasks(self, info):
+        return AcademyTask.objects.all()
+
+    def resolve_all_materials(self, info):
+        return Material.objects.all()
+
+    def resolve_all_landing_pages(self, info):
+        return LandingPage.objects.all()
+
+    def resolve_landing_page_by_slug(self, info, slug):
+        return LandingPage.objects.filter(slug=slug).first()
+
+    def resolve_homepage_content(self, info):
+        return HomepageContent.get_singleton()
 
 # --- Mutations ---
 
@@ -147,25 +260,621 @@ class CreateTeacher(graphene.Mutation):
         name = graphene.String(required=True)
         description = graphene.String()
         status = graphene.String()
+        phone_number = graphene.String()
+        specialty_ids = graphene.List(graphene.Int)
+
+    teacher = graphene.Field(TeacherType)
+    def mutate(self, info, name, description="", status="ACTIVE", phone_number=None, specialty_ids=None):
+        teacher = Teacher.objects.create(
+            name=name, 
+            description=description, 
+            status=status,
+            phone_number=phone_number
+        )
+        if specialty_ids:
+            teacher.specialties.set(specialty_ids)
+        return CreateTeacher(teacher=teacher)
+
+class UpdateTeacher(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String()
+        description = graphene.String()
+        status = graphene.String()
+        phone_number = graphene.String()
+        specialty_ids = graphene.List(graphene.Int)
 
     teacher = graphene.Field(TeacherType)
 
-    def mutate(self, info, name, description="", status="ACTIVE"):
-        teacher = Teacher.objects.create(name=name, description=description, status=status)
-        return CreateTeacher(teacher=teacher)
+    def mutate(self, info, id, name=None, description=None, status=None, phone_number=None, specialty_ids=None):
+        try:
+            teacher = Teacher.objects.get(pk=id)
+            if name is not None: teacher.name = name
+            if description is not None: teacher.description = description
+            if status is not None: teacher.status = status
+            if phone_number is not None: teacher.phone_number = phone_number
+            if specialty_ids is not None:
+                teacher.specialties.set(specialty_ids)
+            teacher.save()
+            return UpdateTeacher(teacher=teacher)
+        except Teacher.DoesNotExist:
+            return UpdateTeacher(teacher=None)
+
+class CreateAvailability(graphene.Mutation):
+    class Arguments:
+        teacher_id = graphene.Int(required=True)
+        day = graphene.String(required=True)
+        start_time = graphene.Time(required=True)
+        end_time = graphene.Time(required=True)
+
+    availability = graphene.Field(AvailabilityType)
+
+    def mutate(self, info, teacher_id, day, start_time, end_time):
+        teacher = Teacher.objects.get(pk=teacher_id)
+        availability = Availability.objects.create(
+            teacher=teacher,
+            day=day,
+            start_time=start_time,
+            end_time=end_time
+        )
+        return CreateAvailability(availability=availability)
+
+class UpdateAvailability(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        day = graphene.String()
+        start_time = graphene.Time()
+        end_time = graphene.Time()
+
+    availability = graphene.Field(AvailabilityType)
+
+    def mutate(self, info, id, day=None, start_time=None, end_time=None):
+        availability = Availability.objects.get(pk=id)
+        if day:
+            availability.day = day
+        if start_time:
+            availability.start_time = start_time
+        if end_time:
+            availability.end_time = end_time
+        availability.save()
+        return UpdateAvailability(availability=availability)
+
+class DeleteAvailability(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        Availability.objects.filter(pk=id).delete()
+        return DeleteAvailability(success=True)
 
 class CreateStudent(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
+        rut = graphene.String()
+        birth_date = graphene.Date()
+        guardian_name = graphene.String()
+        guardian_phone = graphene.String()
         status = graphene.String()
+        phone_number = graphene.String()
+        level = graphene.String()
+        primary_instrument_id = graphene.Int()
 
     student = graphene.Field(StudentType)
 
-    def mutate(self, info, name, status="ACTIVE"):
-        student = Student.objects.create(name=name, status=status)
+    def mutate(self, info, name, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status="ACTIVE", phone_number=None, level="BEGINNER", primary_instrument_id=None):
+        primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first() if primary_instrument_id else None
+        student = Student.objects.create(
+            name=name,
+            rut=rut,
+            birth_date=birth_date,
+            guardian_name=guardian_name,
+            guardian_phone=guardian_phone,
+            status=status,
+            phone_number=phone_number,
+            level=level,
+            primary_instrument=primary_instrument
+        )
         return CreateStudent(student=student)
+
+class SendWhatsApp(graphene.Mutation):
+    class Arguments:
+        phone_number = graphene.String(required=True)
+        message = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    response = graphene.String()
+
+    def mutate(self, info, phone_number, message):
+        from .whatsapp import WhatsAppService
+        result = WhatsAppService.send_text_message(phone_number, message)
+        if result:
+            import json
+            return SendWhatsApp(success=True, response=json.dumps(result))
+        return SendWhatsApp(success=False, response="Failed to send message")
+
+class SendWhatsAppButtons(graphene.Mutation):
+    class Arguments:
+        phone_number = graphene.String(required=True)
+        text = graphene.String(required=True)
+        buttons_json = graphene.String(required=True) # JSON string of buttons
+
+    success = graphene.Boolean()
+    response = graphene.String()
+
+    def mutate(self, info, phone_number, text, buttons_json):
+        from .whatsapp import WhatsAppService
+        import json
+        buttons = json.loads(buttons_json)
+        result = WhatsAppService.send_button_message(phone_number, text, buttons)
+        if result:
+            return SendWhatsAppButtons(success=True, response=json.dumps(result))
+        return SendWhatsAppButtons(success=False, response="Failed to send buttons")
+
+class CreateLead(graphene.Mutation):
+    class Arguments:
+        nombre = graphene.String(required=True)
+        telefono = graphene.String(required=True)
+        email = graphene.String()
+        edad = graphene.Int()
+        servicio = graphene.String()
+        fuente = graphene.String()
+
+    lead = graphene.Field(LeadType)
+
+    def mutate(self, info, nombre, telefono, email=None, edad=None, servicio='CLASE_PRUEBA', fuente='WEB'):
+        lead = Lead.objects.create(
+            nombre=nombre,
+            telefono=telefono,
+            email=email,
+            edad=edad,
+            servicio=servicio,
+            fuente=fuente
+        )
+        return CreateLead(lead=lead)
+
+class ConvertLeadToStudent(graphene.Mutation):
+    class Arguments:
+        lead_id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    student = graphene.Field(StudentType)
+
+    def mutate(self, info, lead_id):
+        try:
+            lead = Lead.objects.get(pk=lead_id)
+            if lead.estado == 'CONCRETADO':
+                return ConvertLeadToStudent(success=False, student=None)
+
+            # Create Student
+            student = Student.objects.create(
+                name=lead.nombre,
+                phone_number=lead.telefono,
+                status='ACTIVE'
+            )
+            
+            # Update Lead string state
+            lead.estado = 'CONCRETADO'
+            lead.save()
+            return ConvertLeadToStudent(success=True, student=student)
+        except Lead.DoesNotExist:
+            return ConvertLeadToStudent(success=False, student=None)
+
+class RegisterPayment(graphene.Mutation):
+    class Arguments:
+        student_id = graphene.Int(required=True)
+        amount = graphene.Float(required=True)
+        method = graphene.String(required=True) # TRANSFER, CASH, CARD
+        description = graphene.String()
+        plan_id = graphene.Int() # If they also bought a pack
+
+    success = graphene.Boolean()
+    payment = graphene.Field(PaymentType)
+    pack = graphene.Field(StudentPackType)
+
+    def mutate(self, info, student_id, amount, method, description=None, plan_id=None):
+        student = Student.objects.get(pk=student_id)
+        
+        pack = None
+        if plan_id:
+            plan = Plan.objects.get(pk=plan_id)
+            pack = StudentPack.objects.create(student=student, plan=plan)
+
+        payment = Payment.objects.create(
+            student=student,
+            amount=amount,
+            method=method,
+            description=description,
+            pack=pack
+        )
+        return RegisterPayment(success=True, payment=payment, pack=pack)
+
+class CreateStudentPack(graphene.Mutation):
+    class Arguments:
+        student_id = graphene.Int(required=True)
+        plan_id = graphene.Int(required=True)
+        purchase_date = graphene.Date()
+
+    pack = graphene.Field(StudentPackType)
+
+    def mutate(self, info, student_id, plan_id, purchase_date=None):
+        student = Student.objects.get(pk=student_id)
+        plan = Plan.objects.get(pk=plan_id)
+        
+        pack = StudentPack.objects.create(
+            student=student,
+            plan=plan,
+            purchase_date=purchase_date if purchase_date else timezone.now()
+        )
+        return CreateStudentPack(pack=pack)
+
+class ManualDeductClass(graphene.Mutation):
+    class Arguments:
+        pack_id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    pack = graphene.Field(StudentPackType)
+
+    def mutate(self, info, pack_id):
+        try:
+            pack = StudentPack.objects.get(pk=pack_id)
+            if pack.remaining_classes > 0:
+                pack.remaining_classes -= 1
+                pack.save()
+                return ManualDeductClass(success=True, pack=pack)
+            return ManualDeductClass(success=False, pack=pack)
+        except StudentPack.DoesNotExist:
+            return ManualDeductClass(success=False, pack=None)
+
+class UpdateLessonStatus(graphene.Mutation):
+    class Arguments:
+        lesson_id = graphene.Int(required=True)
+        status = graphene.String(required=True) # PENDING, COMPLETED, CANCELLED
+
+    success = graphene.Boolean()
+    lesson = graphene.Field(LessonType)
+
+    def mutate(self, info, lesson_id, status):
+        try:
+            lesson = Lesson.objects.get(pk=lesson_id)
+            old_status = lesson.status
+            lesson.status = status
+            lesson.save()
+
+            # Auto-deduct class if status changed to COMPLETED
+            if old_status != 'COMPLETED' and status == 'COMPLETED':
+                active_pack = StudentPack.objects.filter(
+                    student=lesson.student,
+                    is_active=True,
+                    remaining_classes__gt=0
+                ).order_by('expiration_date').first()
+                if active_pack:
+                    active_pack.remaining_classes -= 1
+                    active_pack.save()
+                    
+            return UpdateLessonStatus(success=True, lesson=lesson)
+        except Lesson.DoesNotExist:
+            return UpdateLessonStatus(success=False, lesson=None)
+
+class UpdateLeadStatus(graphene.Mutation):
+    class Arguments:
+        lead_id = graphene.ID(required=True)
+        status = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    lead = graphene.Field(LeadType)
+
+    def mutate(self, info, lead_id, status):
+        try:
+            lead = Lead.objects.get(pk=lead_id)
+            lead.estado = status
+            lead.save()
+            return UpdateLeadStatus(success=True, lead=lead)
+        except Lead.DoesNotExist:
+            return UpdateLeadStatus(success=False, lead=None)
+
+class CreatePlan(graphene.Mutation):
+    class Arguments:
+        name = graphene.String(required=True)
+        price = graphene.Float(required=True)
+        duration = graphene.Int(required=True)
+        classes_count = graphene.Int(required=True)
+        is_featured = graphene.Boolean()
+
+    plan = graphene.Field(PlanType)
+
+    def mutate(self, info, name, price, duration, classes_count, is_featured=False):
+        plan = Plan.objects.create(
+            name=name,
+            price=price,
+            duration=duration,
+            classes_count=classes_count,
+            is_featured=is_featured
+        )
+        return CreatePlan(plan=plan)
+
+class DeletePlan(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        try:
+            plan = Plan.objects.get(pk=id)
+            plan.delete()
+            return DeletePlan(success=True)
+        except Plan.DoesNotExist:
+            return DeletePlan(success=False)
+
+class UpdatePlan(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String()
+        price = graphene.Float()
+        duration = graphene.Int()
+        classes_count = graphene.Int()
+        is_featured = graphene.Boolean()
+
+    plan = graphene.Field(PlanType)
+
+    def mutate(self, info, id, name=None, price=None, duration=None, classes_count=None, is_featured=None):
+        try:
+            plan = Plan.objects.get(pk=id)
+            if name is not None: plan.name = name
+            if price is not None: plan.price = price
+            if duration is not None: plan.duration = duration
+            if classes_count is not None: plan.classes_count = classes_count
+            if is_featured is not None: plan.is_featured = is_featured
+            plan.save()
+            return UpdatePlan(plan=plan)
+        except Plan.DoesNotExist:
+            return UpdatePlan(plan=None)
+
+        except Plan.DoesNotExist:
+            return UpdatePlan(plan=None)
+
+class CreateAcademyTask(graphene.Mutation):
+    class Arguments:
+        title = graphene.String(required=True)
+        description = graphene.String()
+        assigned_to = graphene.String()
+        priority = graphene.String()
+        log = graphene.String()
+
+    task = graphene.Field(AcademyTaskType)
+
+    def mutate(self, info, title, description="", assigned_to="RECEPCION", priority="RECORDATORIO", log=""):
+        task = AcademyTask.objects.create(
+            title=title,
+            description=description,
+            assigned_to=assigned_to,
+            priority=priority,
+            log=log
+        )
+        return CreateAcademyTask(task=task)
+
+class UpdateAcademyTask(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        title = graphene.String()
+        description = graphene.String()
+        assigned_to = graphene.String()
+        priority = graphene.String()
+        log = graphene.String()
+        is_completed = graphene.Boolean()
+
+    task = graphene.Field(AcademyTaskType)
+
+    def mutate(self, info, id, title=None, description=None, assigned_to=None, priority=None, log=None, is_completed=None):
+        try:
+            task = AcademyTask.objects.get(pk=id)
+            if title is not None: task.title = title
+            if description is not None: task.description = description
+            if assigned_to is not None: task.assigned_to = assigned_to
+            if priority is not None: task.priority = priority
+            if log is not None: task.log = log
+            if is_completed is not None: task.is_completed = is_completed
+            task.save()
+            return UpdateAcademyTask(task=task)
+        except AcademyTask.DoesNotExist:
+            return UpdateAcademyTask(task=None)
+
+class DeleteAcademyTask(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        AcademyTask.objects.filter(pk=id).delete()
+        return DeleteAcademyTask(success=True)
+
+class CreateInstrument(graphene.Mutation):
+    class Arguments:
+        name = graphene.String(required=True)
+
+    instrument = graphene.Field(InstrumentType)
+
+    def mutate(self, info, name):
+        instrument = Instrument.objects.create(name=name)
+        return CreateInstrument(instrument=instrument)
+
+class UpdateInstrument(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String(required=True)
+
+    instrument = graphene.Field(InstrumentType)
+
+    def mutate(self, info, id, name):
+        try:
+            instrument = Instrument.objects.get(pk=id)
+            instrument.name = name
+            instrument.save()
+            return UpdateInstrument(instrument=instrument)
+        except Instrument.DoesNotExist:
+            return UpdateInstrument(instrument=None)
+
+class DeleteInstrument(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        Instrument.objects.filter(pk=id).delete()
+        return DeleteInstrument(success=True)
+
+class CreateMaterial(graphene.Mutation):
+    class Arguments:
+        title = graphene.String(required=True)
+        type = graphene.String(required=True)
+        url = graphene.String(required=True)
+        teacher_id = graphene.Int()
+
+    material = graphene.Field(MaterialType)
+
+    def mutate(self, info, title, type, url, teacher_id=None):
+        teacher = Teacher.objects.filter(pk=teacher_id).first() if teacher_id else None
+        material = Material.objects.create(title=title, type=type, url=url, teacher=teacher)
+        return CreateMaterial(material=material)
+
+class CreateStudentPrivateNote(graphene.Mutation):
+    class Arguments:
+        student_id = graphene.Int(required=True)
+        text = graphene.String(required=True)
+        author = graphene.String(required=True)
+
+    note = graphene.Field(StudentPrivateNoteType)
+
+    def mutate(self, info, student_id, text, author):
+        student = Student.objects.get(pk=student_id)
+        note = StudentPrivateNote.objects.create(student=student, text=text, author=author)
+        return CreateStudentPrivateNote(note=note)
+
+class CreateStudentWallMessage(graphene.Mutation):
+    class Arguments:
+        student_id = graphene.Int(required=True)
+        text = graphene.String(required=True)
+        author = graphene.String(required=True)
+        attached_material_id = graphene.Int()
+
+    message = graphene.Field(StudentWallMessageType)
+
+    def mutate(self, info, student_id, text, author, attached_material_id=None):
+        student = Student.objects.get(pk=student_id)
+        material = Material.objects.filter(pk=attached_material_id).first() if attached_material_id else None
+        message = StudentWallMessage.objects.create(
+            student=student, 
+            text=text, 
+            author=author, 
+            attached_material=material
+        )
+        return CreateStudentWallMessage(message=message)
+
+class UpdateLandingPage(graphene.Mutation):
+    class Arguments:
+        slug = graphene.String(required=True)
+        title = graphene.String()
+        subtitle = graphene.String()
+        problem = graphene.String()
+        solution = graphene.String()
+        benefits = graphene.List(graphene.String)
+        image_url = graphene.String()
+        cta = graphene.String()
+
+    success = graphene.Boolean()
+    landing_page = graphene.Field(LandingPageType)
+
+    def mutate(self, info, slug, title=None, subtitle=None, problem=None, solution=None, benefits=None, image_url=None, cta=None):
+        try:
+            landing = LandingPage.objects.get(slug=slug)
+            if title is not None: landing.title = title
+            if subtitle is not None: landing.subtitle = subtitle
+            if problem is not None: landing.problem = problem
+            if solution is not None: landing.solution = solution
+            if benefits is not None: landing.benefits = benefits
+            if image_url is not None: landing.image_url = image_url
+            if cta is not None: landing.cta = cta
+            landing.save()
+            return UpdateLandingPage(success=True, landing_page=landing)
+        except LandingPage.DoesNotExist:
+            return UpdateLandingPage(success=False, landing_page=None)
+
+
+class UpdateHomepageContent(graphene.Mutation):
+    class Arguments:
+        hero_image = graphene.String()
+        hero_title_1 = graphene.String()
+        hero_title_highlight = graphene.String()
+        hero_title_2 = graphene.String()
+        hero_subtitle = graphene.String()
+        hero_cta1_text = graphene.String()
+        hero_cta1_link = graphene.String()
+        hero_cta2_text = graphene.String()
+        hero_cta2_link = graphene.String()
+        features = graphene.String()        # JSON string
+        method_badge = graphene.String()
+        method_title = graphene.String()
+        method_description = graphene.String()
+        method_items = graphene.String()    # JSON string
+        method_image = graphene.String()
+        testimonials = graphene.String()    # JSON string
+        location_title = graphene.String()
+        location_description = graphene.String()
+        location_address = graphene.String()
+        location_address_detail = graphene.String()
+        location_map_url = graphene.String()
+        final_cta_title = graphene.String()
+        final_cta_description = graphene.String()
+        final_cta_button_text = graphene.String()
+
+    success = graphene.Boolean()
+    homepage = graphene.Field(HomepageContentType)
+
+    def mutate(self, info, **kwargs):
+        import json
+        homepage = HomepageContent.get_singleton()
+        json_fields = {'features', 'method_items', 'testimonials'}
+        for field, value in kwargs.items():
+            if field in json_fields:
+                setattr(homepage, field, json.loads(value))
+            else:
+                setattr(homepage, field, value)
+        homepage.save()
+        return UpdateHomepageContent(success=True, homepage=homepage)
+
 
 class Mutation(graphene.ObjectType):
     create_lesson = CreateLesson.Field()
     create_student = CreateStudent.Field()
     create_teacher = CreateTeacher.Field()
+    create_availability = CreateAvailability.Field()
+    update_availability = UpdateAvailability.Field()
+    delete_availability = DeleteAvailability.Field()
+    send_whatsapp = SendWhatsApp.Field()
+    send_whatsapp_buttons = SendWhatsAppButtons.Field()
+    create_lead = CreateLead.Field()
+    convert_lead_to_student = ConvertLeadToStudent.Field()
+    register_payment = RegisterPayment.Field()
+    update_lesson_status = UpdateLessonStatus.Field()
+    update_lead_status = UpdateLeadStatus.Field()
+    update_plan = UpdatePlan.Field()
+    delete_plan = DeletePlan.Field()
+    update_teacher = UpdateTeacher.Field()
+    create_academy_task = CreateAcademyTask.Field()
+    update_academy_task = UpdateAcademyTask.Field()
+    delete_academy_task = DeleteAcademyTask.Field()
+    create_instrument = CreateInstrument.Field()
+    update_instrument = UpdateInstrument.Field()
+    delete_instrument = DeleteInstrument.Field()
+    create_student_pack = CreateStudentPack.Field()
+    manual_deduct_class = ManualDeductClass.Field()
+    create_material = CreateMaterial.Field()
+    create_student_private_note = CreateStudentPrivateNote.Field()
+    create_student_wall_message = CreateStudentWallMessage.Field()
+    create_plan = CreatePlan.Field()
+    update_landing_page = UpdateLandingPage.Field()
+    update_homepage_content = UpdateHomepageContent.Field()

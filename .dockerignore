@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+htmlcov/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Databases / Media / OS / IDE
+*.sqlite3
+media/
+.DS_Store
+.vscode/
+.idea/
+Dockerfile
+docker-compose.yml
+.env
+.env.example

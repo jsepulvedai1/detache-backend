@@ -1,5 +1,28 @@
 from django.contrib import admin
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask
+
+class LeadNoteInline(admin.TabularInline):
+    model = LeadNote
+    extra = 1
+
+@admin.register(Lead)
+class LeadAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'telefono', 'servicio', 'fuente', 'estado', 'fecha_ingreso')
+    list_filter = ('estado', 'servicio', 'fuente')
+    search_fields = ('nombre', 'telefono', 'email')
+    inlines = [LeadNoteInline]
+
+@admin.register(StudentPack)
+class StudentPackAdmin(admin.ModelAdmin):
+    list_display = ('student', 'plan', 'remaining_classes', 'is_active', 'expiration_date')
+    list_filter = ('is_active', 'plan')
+    search_fields = ('student__name',)
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ('student', 'amount', 'method', 'payment_date')
+    list_filter = ('method', 'payment_date')
+    search_fields = ('student__name',)
 
 @admin.register(Teacher)
 class TeacherAdmin(admin.ModelAdmin):
@@ -47,3 +70,9 @@ class LessonAdmin(admin.ModelAdmin):
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
     list_display = ('name', 'price', 'duration')
+
+@admin.register(AcademyTask)
+class AcademyTaskAdmin(admin.ModelAdmin):
+    list_display = ('title', 'assigned_to', 'priority', 'is_completed', 'created_at')
+    list_filter = ('assigned_to', 'priority', 'is_completed')
+    search_fields = ('title', 'description')
