@@ -945,6 +945,66 @@ class DeleteClassType(graphene.Mutation):
             return DeleteClassType(success=False)
 
 
+class CreateRoom(graphene.Mutation):
+    class Arguments:
+        name = graphene.String(required=True)
+        capacity = graphene.Int()
+        status = graphene.String()
+        instrument_ids = graphene.List(graphene.Int)
+
+    room = graphene.Field(RoomType)
+
+    def mutate(self, info, name, capacity=1, status='AVAILABLE', instrument_ids=None):
+        room = Room.objects.create(
+            name=name,
+            capacity=capacity,
+            status=status
+        )
+        if instrument_ids:
+            room.instruments.set(Instrument.objects.filter(pk__in=instrument_ids))
+        return CreateRoom(room=room)
+
+
+class UpdateRoom(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String()
+        capacity = graphene.Int()
+        status = graphene.String()
+        instrument_ids = graphene.List(graphene.Int)
+
+    success = graphene.Boolean()
+    room = graphene.Field(RoomType)
+
+    def mutate(self, info, id, name=None, capacity=None, status=None, instrument_ids=None):
+        try:
+            room = Room.objects.get(pk=id)
+            if name is not None: room.name = name
+            if capacity is not None: room.capacity = capacity
+            if status is not None: room.status = status
+            if instrument_ids is not None:
+                room.instruments.set(Instrument.objects.filter(pk__in=instrument_ids))
+            room.save()
+            return UpdateRoom(success=True, room=room)
+        except Room.DoesNotExist:
+            return UpdateRoom(success=False, room=None)
+
+
+class DeleteRoom(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        try:
+            room = Room.objects.get(pk=id)
+            room.delete()
+            return DeleteRoom(success=True)
+        except Room.DoesNotExist:
+            return DeleteRoom(success=False)
+
+
 class Mutation(graphene.ObjectType):
     create_lesson = CreateLesson.Field()
     create_student = CreateStudent.Field()
@@ -979,3 +1039,6 @@ class Mutation(graphene.ObjectType):
     create_plan = CreatePlan.Field()
     update_landing_page = UpdateLandingPage.Field()
     update_homepage_content = UpdateHomepageContent.Field()
+    create_room = CreateRoom.Field()
+    update_room = UpdateRoom.Field()
+    delete_room = DeleteRoom.Field()
