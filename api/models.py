@@ -396,3 +396,18 @@ class StudentWallMessage(models.Model):
 
     def __str__(self):
         return f"Wall Message for {self.student.name} by {self.author}"
+
+
+class ClassType(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    duration_minutes = models.IntegerField(default=45)
+    price = models.IntegerField(default=0)
+    currency = models.CharField(max_length=10, default='CLP')
+    allowed_levels = models.JSONField(default=list)  # e.g. ["BEGINNER"]
+    allowed_modalities = models.JSONField(default=list)  # e.g. ["ONLINE", "IN_PERSON"]
+    what_you_will_learn = models.JSONField(default=list)  # e.g. ["Técnica", "Lectura"]
+    teachers = models.ManyToManyField(Teacher, blank=True, related_name='class_types')
+
+    def __str__(self):
+        return self.name

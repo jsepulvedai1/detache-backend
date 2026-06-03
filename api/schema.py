@@ -1,7 +1,7 @@
 import graphene
 from django.utils import timezone
 from graphene_django import DjangoObjectType
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType
 
 # --- Object Types ---
 
@@ -119,6 +119,14 @@ class HomepageContentType(DjangoObjectType):
             "final_cta_title", "final_cta_description", "final_cta_button_text",
         )
 
+class ClassTypeType(DjangoObjectType):
+    class Meta:
+        model = ClassType
+        fields = (
+            "id", "name", "description", "duration_minutes", "price", "currency",
+            "allowed_levels", "allowed_modalities", "what_you_will_learn", "teachers"
+        )
+
 # --- Queries ---
 
 class Query(graphene.ObjectType):
@@ -161,6 +169,10 @@ class Query(graphene.ObjectType):
 
     # Homepage
     homepage_content = graphene.Field(HomepageContentType)
+
+    # Class Types / Catalog
+    all_class_types = graphene.List(ClassTypeType)
+    class_type_by_id = graphene.Field(ClassTypeType, id=graphene.Int(required=True))
 
     def resolve_hello(self, info):
         return "Hello, this is the Detache backend with GraphQL!"
@@ -224,6 +236,12 @@ class Query(graphene.ObjectType):
 
     def resolve_homepage_content(self, info):
         return HomepageContent.get_singleton()
+
+    def resolve_all_class_types(self, info):
+        return ClassType.objects.all()
+
+    def resolve_class_type_by_id(self, info, id):
+        return ClassType.objects.filter(pk=id).first()
 
 # --- Mutations ---
 
@@ -847,6 +865,86 @@ class UpdateHomepageContent(graphene.Mutation):
         return UpdateHomepageContent(success=True, homepage=homepage)
 
 
+class CreateClassType(graphene.Mutation):
+    class Arguments:
+        name = graphene.String(required=True)
+        description = graphene.String()
+        duration_minutes = graphene.Int()
+        price = graphene.Int()
+        currency = graphene.String()
+        allowed_levels = graphene.List(graphene.String)
+        allowed_modalities = graphene.List(graphene.String)
+        what_you_will_learn = graphene.List(graphene.String)
+        teacher_ids = graphene.List(graphene.Int)
+
+    class_type = graphene.Field(ClassTypeType)
+
+    def mutate(self, info, name, description=None, duration_minutes=45, price=0, currency='CLP', allowed_levels=None, allowed_modalities=None, what_you_will_learn=None, teacher_ids=None):
+        class_type = ClassType.objects.create(
+            name=name,
+            description=description,
+            duration_minutes=duration_minutes,
+            price=price,
+            currency=currency,
+            allowed_levels=allowed_levels or [],
+            allowed_modalities=allowed_modalities or [],
+            what_you_will_learn=what_you_will_learn or []
+        )
+        if teacher_ids:
+            class_type.teachers.set(Teacher.objects.filter(pk__in=teacher_ids))
+        return CreateClassType(class_type=class_type)
+
+
+class UpdateClassType(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String()
+        description = graphene.String()
+        duration_minutes = graphene.Int()
+        price = graphene.Int()
+        currency = graphene.String()
+        allowed_levels = graphene.List(graphene.String)
+        allowed_modalities = graphene.List(graphene.String)
+        what_you_will_learn = graphene.List(graphene.String)
+        teacher_ids = graphene.List(graphene.Int)
+
+    success = graphene.Boolean()
+    class_type = graphene.Field(ClassTypeType)
+
+    def mutate(self, info, id, name=None, description=None, duration_minutes=None, price=None, currency=None, allowed_levels=None, allowed_modalities=None, what_you_will_learn=None, teacher_ids=None):
+        try:
+            ct = ClassType.objects.get(pk=id)
+            if name is not None: ct.name = name
+            if description is not None: ct.description = description
+            if duration_minutes is not None: ct.duration_minutes = duration_minutes
+            if price is not None: ct.price = price
+            if currency is not None: ct.currency = currency
+            if allowed_levels is not None: ct.allowed_levels = allowed_levels
+            if allowed_modalities is not None: ct.allowed_modalities = allowed_modalities
+            if what_you_will_learn is not None: ct.what_you_will_learn = what_you_will_learn
+            if teacher_ids is not None:
+                ct.teachers.set(Teacher.objects.filter(pk__in=teacher_ids))
+            ct.save()
+            return UpdateClassType(success=True, class_type=ct)
+        except ClassType.DoesNotExist:
+            return UpdateClassType(success=False, class_type=None)
+
+
+class DeleteClassType(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        try:
+            ct = ClassType.objects.get(pk=id)
+            ct.delete()
+            return DeleteClassType(success=True)
+        except ClassType.DoesNotExist:
+            return DeleteClassType(success=False)
+
+
 class Mutation(graphene.ObjectType):
     create_lesson = CreateLesson.Field()
     create_student = CreateStudent.Field()
@@ -864,6 +962,9 @@ class Mutation(graphene.ObjectType):
     update_plan = UpdatePlan.Field()
     delete_plan = DeletePlan.Field()
     update_teacher = UpdateTeacher.Field()
+    create_class_type = CreateClassType.Field()
+    update_class_type = UpdateClassType.Field()
+    delete_class_type = DeleteClassType.Field()
     create_academy_task = CreateAcademyTask.Field()
     update_academy_task = UpdateAcademyTask.Field()
     delete_academy_task = DeleteAcademyTask.Field()
