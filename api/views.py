@@ -45,11 +45,31 @@ class WhatsAppWebhookView(View):
                     elif text_strip == "2":
                         self.cancel_last_lesson(phone_number)
                     else:
-                        # Use Gemini AI for natural language queries
-                        from .ai import AIService
-                        ai_response = AIService.get_response(text_strip)
-                        from .whatsapp import WhatsAppService
-                        WhatsAppService.send_text_message(phone_number, ai_response)
+                        from .models import Student, Lead
+                        from django.utils import timezone
+                        
+                        # 1. Check if it's an active Student
+                        student = Student.objects.filter(phone_number__icontains=phone_number).first()
+                        if student:
+                            print(f"Webhook: Mensaje de alumno registrado ({student.name})")
+                        else:
+                            # 2. Check if it's an existing Lead
+                            lead = Lead.objects.filter(telefono__icontains=phone_number).first()
+                            if lead:
+                                print(f"Webhook: Mensaje de lead existente ({lead.nombre})")
+                                if lead.estado == 'NUEVO':
+                                    lead.estado = 'CONTACTADO'
+                                lead.fecha_ultimo_contacto = timezone.now()
+                                lead.save()
+                            else:
+                                # 3. Create a new Lead
+                                print(f"Webhook: Creando nuevo lead para {phone_number}")
+                                Lead.objects.create(
+                                    nombre=f"Contacto WA {phone_number}",
+                                    telefono=phone_number,
+                                    fuente='WHATSAPP',
+                                    estado='NUEVO'
+                                )
 
             return JsonResponse({"status": "SUCCESS"})
         except Exception as e:

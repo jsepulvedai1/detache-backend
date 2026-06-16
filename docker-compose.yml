@@ -40,7 +40,7 @@ services:
       - DB_PASSWORD=detache_password
       - DB_HOST=db
       - DB_PORT=5432
-      - EVOLUTION_API_URL=http://localhost:8080
+      - EVOLUTION_API_URL=http://157.245.82.247:8080
       - EVOLUTION_API_KEY=admin_apikey_123
       - EVOLUTION_INSTANCE_NAME=MainInstance
       - OLLAMA_URL=http://host.docker.internal:11434/api/generate
