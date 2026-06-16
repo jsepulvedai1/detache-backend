@@ -14,7 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U detache_user -d detache_db"]
+      test: [ "CMD-SHELL", "pg_isready -U detache_user -d detache_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -32,7 +32,7 @@ services:
     environment:
       - SECRET_KEY=django-insecure-detache-secret-key-development
       - DEBUG=True
-      - ALLOWED_HOSTS=127.0.0.1,localhost,host.docker.internal,157.245.82.247,https://www.detache.cl/,https://pianoacademy-git-main-jsepulvedai1s-projects.vercel.app
+      - ALLOWED_HOSTS=127.0.0.1,localhost,api.detache.cl,host.docker.internal,157.245.82.247,https://www.detache.cl/,https://pianoacademy-git-main-jsepulvedai1s-projects.vercel.app
       - CORS_ALLOW_ALL_ORIGINS=True
       - DB_ENGINE=django.db.backends.postgresql
       - DB_NAME=detache_db
