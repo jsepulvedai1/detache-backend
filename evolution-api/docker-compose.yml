@@ -13,7 +13,7 @@ services:
       # --- Fix Database Error ---
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=postgresql://detache_user:detache_password@host.docker.internal:5432/detache_db?schema=public
+      - DATABASE_CONNECTION_URI=postgresql://detache_user:detache_password@host.docker.internal:5432/detache_db?schema=evolution
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
