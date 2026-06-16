@@ -12,8 +12,10 @@ services:
       - AUTHENTICATION_API_KEY=admin_apikey_123
       # --- Fix Database Error ---
       - DATABASE_ENABLED=true
-      - DATABASE_PROVIDER=sqlite
-      - DATABASE_CONNECTION_URI=file:/evolution/instances/database.sqlite
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://detache_user:detache_password@host.docker.internal:5432/detache_db?schema=public
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - evolution_instances:/evolution/instances
     networks:
