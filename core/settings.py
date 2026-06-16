@@ -39,6 +39,8 @@ ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_ENV.split(',') if host.s
 CSRF_TRUSTED_ORIGINS_ENV = os.getenv('CSRF_TRUSTED_ORIGINS', 'https://api.detache.cl,https://detache.cl,https://www.detache.cl')
 CSRF_TRUSTED_ORIGINS = [host.strip() for host in CSRF_TRUSTED_ORIGINS_ENV.split(',') if host.strip()]
 
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 CORS_ALLOW_ALL_ORIGINS_ENV = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True')
 CORS_ALLOW_ALL_ORIGINS = CORS_ALLOW_ALL_ORIGINS_ENV.lower() in ('true', '1', 't')
 
