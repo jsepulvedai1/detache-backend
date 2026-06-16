@@ -24,6 +24,10 @@ services:
       # --- Fix Redis Error ---
       - CACHE_REDIS_ENABLED=false
       - CACHE_LOCAL_ENABLED=true
+      # --- Webhook Configuration ---
+      - WEBHOOK_GLOBAL_URL=https://api.detache.cl/api/whatsapp/webhook/
+      - WEBHOOK_GLOBAL_ENABLED=true
+      - WEBHOOK_GLOBAL_EVENTS=MESSAGES_UPSERT
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
