@@ -14,6 +14,13 @@ services:
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://detache_user:detache_password@host.docker.internal:5432/detache_db?schema=evolution
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_LABELS=true
+      - DATABASE_SAVE_DATA_HISTORIC=true
       # --- Fix Redis Error ---
       - CACHE_REDIS_ENABLED=false
       - CACHE_LOCAL_ENABLED=true
