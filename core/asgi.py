@@ -20,7 +20,7 @@ from django.urls import path
 import channels_graphql_ws
 from core.schema import schema
 
-class MyGraphQLSubscriptionConsumer(channels_graphql_ws.GraphQLSubscriptionConsumer):
+class MyGraphQLSubscriptionConsumer(channels_graphql_ws.GraphqlWsConsumer):
     schema = schema
 
 django_asgi_app = get_asgi_application()
