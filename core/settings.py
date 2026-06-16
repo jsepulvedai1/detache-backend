@@ -36,6 +36,9 @@ DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 't')
 ALLOWED_HOSTS_ENV = os.getenv('ALLOWED_HOSTS', 'www.detache.cl,detache.cl,127.0.0.1,localhost,host.docker.internal,157.245.82.247,pianoacademy-git-main-jsepulvedai1s-projects.vercel.app,api.detache.cl')
 ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_ENV.split(',') if host.strip()]
 
+CSRF_TRUSTED_ORIGINS_ENV = os.getenv('CSRF_TRUSTED_ORIGINS', 'https://api.detache.cl,https://detache.cl,https://www.detache.cl')
+CSRF_TRUSTED_ORIGINS = [host.strip() for host in CSRF_TRUSTED_ORIGINS_ENV.split(',') if host.strip()]
+
 CORS_ALLOW_ALL_ORIGINS_ENV = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True')
 CORS_ALLOW_ALL_ORIGINS = CORS_ALLOW_ALL_ORIGINS_ENV.lower() in ('true', '1', 't')
 
