@@ -450,7 +450,12 @@ class CreateLead(graphene.Mutation):
             servicio=servicio,
             fuente=fuente
         )
+        try:
+            OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
+        except Exception as ws_err:
+            print(f"Error broadcasting new lead: {ws_err}")
         return CreateLead(lead=lead)
+
 
 class ConvertLeadToStudent(graphene.Mutation):
     class Arguments:
@@ -588,9 +593,14 @@ class UpdateLeadStatus(graphene.Mutation):
             lead = Lead.objects.get(pk=lead_id)
             lead.estado = status
             lead.save()
+            try:
+                OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+            except Exception as ws_err:
+                print(f"Error broadcasting lead status update: {ws_err}")
             return UpdateLeadStatus(success=True, lead=lead)
         except Lead.DoesNotExist:
             return UpdateLeadStatus(success=False, lead=None)
+
 
 class CreatePlan(graphene.Mutation):
     class Arguments:
@@ -1042,3 +1052,31 @@ class Mutation(graphene.ObjectType):
     create_room = CreateRoom.Field()
     update_room = UpdateRoom.Field()
     delete_room = DeleteRoom.Field()
+
+
+import channels_graphql_ws
+
+class OnLeadUpdated(channels_graphql_ws.Subscription):
+    lead = graphene.Field(LeadType)
+    event_type = graphene.String()
+
+    class Arguments:
+        pass
+
+    def subscribe(self, info):
+        # All clients subscribe to 'leads_group'
+        return ["leads_group"]
+
+    def publish(self, info):
+        lead_id = self.get("lead_id")
+        event_type = self.get("event_type")
+        from api.models import Lead
+        try:
+            lead = Lead.objects.get(pk=lead_id)
+        except Lead.DoesNotExist:
+            lead = None
+        return OnLeadUpdated(lead=lead, event_type=event_type)
+
+class Subscription(graphene.ObjectType):
+    on_lead_updated = OnLeadUpdated.Field()
+

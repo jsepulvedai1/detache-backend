@@ -19,6 +19,13 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: detache_redis
+    restart: always
+    ports:
+      - "6379:6379"
+
   backend:
     build: .
     container_name: detache_backend
@@ -26,7 +33,7 @@ services:
     command: >
       sh -c "python manage.py collectstatic --noinput &&
              python manage.py migrate &&
-             gunicorn core.wsgi:application --bind 0.0.0.0:8000"
+             daphne -b 0.0.0.0 -p 8000 core.asgi:application"
     ports:
       - "8000:8000"
     environment:
@@ -40,6 +47,8 @@ services:
       - DB_PASSWORD=detache_password
       - DB_HOST=db
       - DB_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - EVOLUTION_API_URL=http://157.245.82.247:8080
       - EVOLUTION_API_KEY=admin_apikey_123
       - EVOLUTION_INSTANCE_NAME=MainInstance
@@ -48,6 +57,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
+
 
 volumes:
   postgres_data:

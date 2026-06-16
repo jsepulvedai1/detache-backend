@@ -1,5 +1,5 @@
 import graphene
-from api.schema import Query as ApiQuery, Mutation as ApiMutation
+from api.schema import Query as ApiQuery, Mutation as ApiMutation, Subscription as ApiSubscription
 
 class Query(ApiQuery, graphene.ObjectType):
     pass
@@ -7,4 +7,8 @@ class Query(ApiQuery, graphene.ObjectType):
 class Mutation(ApiMutation, graphene.ObjectType):
     pass
 
-schema = graphene.Schema(query=Query, mutation=Mutation)
+class Subscription(ApiSubscription, graphene.ObjectType):
+    pass
+
+schema = graphene.Schema(query=Query, mutation=Mutation, subscription=Subscription)
+

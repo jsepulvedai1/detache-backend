@@ -61,15 +61,29 @@ class WhatsAppWebhookView(View):
                                     lead.estado = 'CONTACTADO'
                                 lead.fecha_ultimo_contacto = timezone.now()
                                 lead.save()
+                                # WebSocket broadcast
+                                try:
+                                    from api.schema import OnLeadUpdated
+                                    OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+                                except Exception as ws_err:
+                                    print(f"Error broadcasting lead update: {ws_err}")
                             else:
                                 # 3. Create a new Lead
                                 print(f"Webhook: Creando nuevo lead para {phone_number}")
-                                Lead.objects.create(
+                                lead = Lead.objects.create(
                                     nombre=f"Contacto WA {phone_number}",
                                     telefono=phone_number,
                                     fuente='WHATSAPP',
                                     estado='NUEVO'
                                 )
+                                # WebSocket broadcast
+                                try:
+                                    from api.schema import OnLeadUpdated
+                                    OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
+                                except Exception as ws_err:
+                                    print(f"Error broadcasting new lead: {ws_err}")
+
+
 
             return JsonResponse({"status": "SUCCESS"})
         except Exception as e:
