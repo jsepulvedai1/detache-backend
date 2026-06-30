@@ -287,6 +287,7 @@ class Plan(models.Model):
     duration = models.PositiveIntegerField(help_text="Duration in months")
     classes_count = models.PositiveIntegerField(default=4, help_text="Number of classes included in this pack (e.g., 4, 12, 24)")
     is_featured = models.BooleanField(default=False, help_text="Mark as recommended plan on landing page")
+    benefits = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return self.name

@@ -68,7 +68,7 @@ class LessonType(DjangoObjectType):
 class PlanType(DjangoObjectType):
     class Meta:
         model = Plan
-        fields = ("id", "name", "price", "duration", "classes_count", "is_featured")
+        fields = ("id", "name", "price", "duration", "classes_count", "is_featured", "benefits")
     
     price = graphene.String()
 
@@ -609,16 +609,20 @@ class CreatePlan(graphene.Mutation):
         duration = graphene.Int(required=True)
         classes_count = graphene.Int(required=True)
         is_featured = graphene.Boolean()
+        benefits = graphene.List(graphene.String)
 
     plan = graphene.Field(PlanType)
 
-    def mutate(self, info, name, price, duration, classes_count, is_featured=False):
+    def mutate(self, info, name, price, duration, classes_count, is_featured=False, benefits=None):
+        if benefits is None:
+            benefits = []
         plan = Plan.objects.create(
             name=name,
             price=price,
             duration=duration,
             classes_count=classes_count,
-            is_featured=is_featured
+            is_featured=is_featured,
+            benefits=benefits
         )
         return CreatePlan(plan=plan)
 
@@ -644,10 +648,11 @@ class UpdatePlan(graphene.Mutation):
         duration = graphene.Int()
         classes_count = graphene.Int()
         is_featured = graphene.Boolean()
+        benefits = graphene.List(graphene.String)
 
     plan = graphene.Field(PlanType)
 
-    def mutate(self, info, id, name=None, price=None, duration=None, classes_count=None, is_featured=None):
+    def mutate(self, info, id, name=None, price=None, duration=None, classes_count=None, is_featured=None, benefits=None):
         try:
             plan = Plan.objects.get(pk=id)
             if name is not None: plan.name = name
@@ -655,11 +660,9 @@ class UpdatePlan(graphene.Mutation):
             if duration is not None: plan.duration = duration
             if classes_count is not None: plan.classes_count = classes_count
             if is_featured is not None: plan.is_featured = is_featured
+            if benefits is not None: plan.benefits = benefits
             plan.save()
             return UpdatePlan(plan=plan)
-        except Plan.DoesNotExist:
-            return UpdatePlan(plan=None)
-
         except Plan.DoesNotExist:
             return UpdatePlan(plan=None)
 
@@ -830,6 +833,38 @@ class UpdateLandingPage(graphene.Mutation):
             return UpdateLandingPage(success=True, landing_page=landing)
         except LandingPage.DoesNotExist:
             return UpdateLandingPage(success=False, landing_page=None)
+
+
+class CloneLandingPage(graphene.Mutation):
+    class Arguments:
+        source_slug = graphene.String(required=True)
+        new_slug = graphene.String(required=True)
+        new_title = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    landing_page = graphene.Field(LandingPageType)
+    error = graphene.String()
+
+    def mutate(self, info, source_slug, new_slug, new_title):
+        try:
+            if LandingPage.objects.filter(slug=new_slug).exists():
+                return CloneLandingPage(success=False, landing_page=None, error="El slug ya existe.")
+            source = LandingPage.objects.get(slug=source_slug)
+            clone = LandingPage.objects.create(
+                slug=new_slug,
+                title=new_title,
+                subtitle=source.subtitle,
+                problem=source.problem,
+                solution=source.solution,
+                benefits=source.benefits,
+                image_url=source.image_url,
+                cta=source.cta
+            )
+            return CloneLandingPage(success=True, landing_page=clone, error=None)
+        except LandingPage.DoesNotExist:
+            return CloneLandingPage(success=False, landing_page=None, error="Página origen no encontrada.")
+        except Exception as e:
+            return CloneLandingPage(success=False, landing_page=None, error=str(e))
 
 
 class UpdateHomepageContent(graphene.Mutation):
@@ -1048,6 +1083,7 @@ class Mutation(graphene.ObjectType):
     create_student_wall_message = CreateStudentWallMessage.Field()
     create_plan = CreatePlan.Field()
     update_landing_page = UpdateLandingPage.Field()
+    clone_landing_page = CloneLandingPage.Field()
     update_homepage_content = UpdateHomepageContent.Field()
     create_room = CreateRoom.Field()
     update_room = UpdateRoom.Field()
