@@ -412,3 +412,85 @@ class ClassType(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class AboutContent(models.Model):
+    """Singleton model – only one row ever exists (id=1)."""
+    # Hero
+    hero_image = models.CharField(max_length=500, default='/imagesfooter/4.png')
+    hero_title_highlight_1 = models.CharField(max_length=255, default='Aprender')
+    hero_title_text_1 = models.CharField(max_length=255, default='música debe ser una experiencia')
+    hero_title_highlight_2 = models.CharField(max_length=255, default='clara y motivadora.')
+
+    # Historia
+    history_image = models.CharField(max_length=500, default='/imagesfooter/2.png')
+    history_title = models.CharField(max_length=255, default='Nuestra Historia')
+    history_subtitle = models.TextField(default='Academia Detaché nació para transformar la frustración de aprender música en un camino claro y disfrutable.')
+    history_description = models.TextField(default='Cansados de la improvisación, creamos en el sector sur de Santiago un método estructurado, cercano y apasionado que garantiza un avance real, poniendo siempre el progreso y el bienestar del alumno en el centro de nuestra historia.')
+
+    # Lo que nos mueve
+    moving_title = models.CharField(max_length=255, default='Lo que nos Mueve')
+    moving_description = models.TextField(default='Nuestra forma de enseñar nace del amor por la música y del compromiso con cada estudiante.')
+    moving_cards = models.JSONField(default=list)
+
+    # Equipo
+    team_title = models.CharField(max_length=255, default='Nuestro Equipo')
+    team_description = models.TextField(default='Detrás de cada clase hay personas que disfrutan enseñar y compartir su pasión por la música.')
+    team_images = models.JSONField(default=list)
+
+    # CTA Final
+    final_title_1 = models.CharField(max_length=255, default='Conoce una')
+    final_title_2 = models.CharField(max_length=255, default='nueva forma')
+    final_title_3 = models.CharField(max_length=255, default='de aprender')
+    final_image = models.CharField(max_length=500, default='/nosotros/4.png')
+
+    class Meta:
+        verbose_name = "Contenido de Nosotros"
+
+    def __str__(self):
+        return "Contenido de Nosotros (singleton)"
+
+    @classmethod
+    def get_singleton(cls):
+        obj, created = cls.objects.get_or_create(pk=1, defaults={
+            'moving_cards': [
+                {"title": "La música y las personas primero", "description": "Valoramos a cada alumno y respetamos sus objetivos, intereses y ritmo de aprendizaje."},
+                {"title": "Enseñanza cercana y apasionada", "description": "Nuestro equipo está comprometido con brindarte una experiencia de aprendizaje cálida y motivadora."},
+                {"title": "Aprender con dirección", "description": "Contamos con un método claro y estructurado para asegurar tu progreso paso a paso."},
+                {"title": "Disfrutar el proceso", "description": "Hacemos que cada etapa del aprendizaje sea una experiencia positiva y enriquecedora."}
+            ],
+            'team_images': [
+                "/nosotros/1.png",
+                "/nosotros/2.png",
+                "/nosotros/3.png"
+            ]
+        })
+        return obj
+
+
+class ContactContent(models.Model):
+    """Singleton model – only one row ever exists (id=1)."""
+    # Mid-page Banner
+    banner_title_1 = models.CharField(max_length=255, default='Sigamos')
+    banner_title_2 = models.CharField(max_length=255, default='compartiendo')
+    banner_title_3 = models.CharField(max_length=255, default='el lenguaje de')
+    banner_title_4 = models.CharField(max_length=255, default='la música')
+
+    # Ubicación e Info
+    location_title = models.CharField(max_length=255, default='Estamos cerca de ti')
+    location_description = models.TextField(default='Nuestra academia se encuentra en una ubicación estratégica y de fácil acceso, para que llegar a tus clases sea cómodo y sencillo.')
+    location_address_title = models.CharField(max_length=255, default='Dirección Sede')
+    location_address = models.TextField(default='Gran Avenida José Miguel Carrera 8520, Oficina C, La Cisterna.')
+    location_map_iframe_url = models.TextField(default='https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3326.2307849187313!2d-70.6622543!3d-33.5217965!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x9662dae3cbf5df1f%3A0xe54fb7a71fbd4fdf!2sGran%20Av.%20Jos%C3%A9%20Miguel%20Carrera%208520%2C%20La%20Cisterna%2C%20Regi%C3%B3n%20Metropolitana!5e0!3m2!1ses-419!2scl!4v1700000000000!5m2!1ses-419!2scl')
+
+    class Meta:
+        verbose_name = "Contenido de Contacto"
+
+    def __str__(self):
+        return "Contenido de Contacto (singleton)"
+
+    @classmethod
+    def get_singleton(cls):
+        obj, created = cls.objects.get_or_create(pk=1)
+        return obj
+

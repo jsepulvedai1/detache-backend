@@ -1,7 +1,7 @@
 import graphene
 from django.utils import timezone
 from graphene_django import DjangoObjectType
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent
 
 # --- Object Types ---
 
@@ -119,6 +119,27 @@ class HomepageContentType(DjangoObjectType):
             "final_cta_title", "final_cta_description", "final_cta_button_text",
         )
 
+class AboutContentType(DjangoObjectType):
+    class Meta:
+        model = AboutContent
+        fields = (
+            "id",
+            "hero_image", "hero_title_highlight_1", "hero_title_text_1", "hero_title_highlight_2",
+            "history_image", "history_title", "history_subtitle", "history_description",
+            "moving_title", "moving_description", "moving_cards",
+            "team_title", "team_description", "team_images",
+            "final_title_1", "final_title_2", "final_title_3", "final_image"
+        )
+
+class ContactContentType(DjangoObjectType):
+    class Meta:
+        model = ContactContent
+        fields = (
+            "id",
+            "banner_title_1", "banner_title_2", "banner_title_3", "banner_title_4",
+            "location_title", "location_description", "location_address_title", "location_address", "location_map_iframe_url"
+        )
+
 class ClassTypeType(DjangoObjectType):
     class Meta:
         model = ClassType
@@ -169,6 +190,8 @@ class Query(graphene.ObjectType):
 
     # Homepage
     homepage_content = graphene.Field(HomepageContentType)
+    about_content = graphene.Field(AboutContentType)
+    contact_content = graphene.Field(ContactContentType)
 
     # Class Types / Catalog
     all_class_types = graphene.List(ClassTypeType)
@@ -236,6 +259,12 @@ class Query(graphene.ObjectType):
 
     def resolve_homepage_content(self, info):
         return HomepageContent.get_singleton()
+
+    def resolve_about_content(self, info):
+        return AboutContent.get_singleton()
+
+    def resolve_contact_content(self, info):
+        return ContactContent.get_singleton()
 
     def resolve_all_class_types(self, info):
         return ClassType.objects.all()
@@ -910,6 +939,69 @@ class UpdateHomepageContent(graphene.Mutation):
         return UpdateHomepageContent(success=True, homepage=homepage)
 
 
+class UpdateAboutContent(graphene.Mutation):
+    class Arguments:
+        hero_image = graphene.String()
+        hero_title_highlight_1 = graphene.String()
+        hero_title_text_1 = graphene.String()
+        hero_title_highlight_2 = graphene.String()
+        history_image = graphene.String()
+        history_title = graphene.String()
+        history_subtitle = graphene.String()
+        history_description = graphene.String()
+        moving_title = graphene.String()
+        moving_description = graphene.String()
+        moving_cards = graphene.String()
+        team_title = graphene.String()
+        team_description = graphene.String()
+        team_images = graphene.String()
+        final_title_1 = graphene.String()
+        final_title_2 = graphene.String()
+        final_title_3 = graphene.String()
+        final_image = graphene.String()
+
+    success = graphene.Boolean()
+    about = graphene.Field(AboutContentType)
+
+    def mutate(self, info, **kwargs):
+        import json
+        about = AboutContent.get_singleton()
+        json_fields = {'moving_cards', 'team_images'}
+        for field, value in kwargs.items():
+            if field in json_fields:
+                try:
+                    setattr(about, field, json.loads(value))
+                except Exception as e:
+                    print(f"Error parsing JSON for {field}: {e}")
+            else:
+                setattr(about, field, value)
+        about.save()
+        return UpdateAboutContent(success=True, about=about)
+
+
+class UpdateContactContent(graphene.Mutation):
+    class Arguments:
+        banner_title_1 = graphene.String()
+        banner_title_2 = graphene.String()
+        banner_title_3 = graphene.String()
+        banner_title_4 = graphene.String()
+        location_title = graphene.String()
+        location_description = graphene.String()
+        location_address_title = graphene.String()
+        location_address = graphene.String()
+        location_map_iframe_url = graphene.String()
+
+    success = graphene.Boolean()
+    contact = graphene.Field(ContactContentType)
+
+    def mutate(self, info, **kwargs):
+        contact = ContactContent.get_singleton()
+        for field, value in kwargs.items():
+            setattr(contact, field, value)
+        contact.save()
+        return UpdateContactContent(success=True, contact=contact)
+
+
 class CreateClassType(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
@@ -1085,6 +1177,8 @@ class Mutation(graphene.ObjectType):
     update_landing_page = UpdateLandingPage.Field()
     clone_landing_page = CloneLandingPage.Field()
     update_homepage_content = UpdateHomepageContent.Field()
+    update_about_content = UpdateAboutContent.Field()
+    update_contact_content = UpdateContactContent.Field()
     create_room = CreateRoom.Field()
     update_room = UpdateRoom.Field()
     delete_room = DeleteRoom.Field()

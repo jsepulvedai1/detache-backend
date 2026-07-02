@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, LandingPage, HomepageContent, ClassType
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent
 
 class LeadNoteInline(admin.TabularInline):
     model = LeadNote
@@ -89,3 +89,12 @@ class HomepageContentAdmin(admin.ModelAdmin):
 class ClassTypeAdmin(admin.ModelAdmin):
     list_display = ('name', 'price', 'duration_minutes')
     filter_horizontal = ('teachers',)
+
+@admin.register(AboutContent)
+class AboutContentAdmin(admin.ModelAdmin):
+    list_display = ('__str__', 'hero_title_text_1')
+
+@admin.register(ContactContent)
+class ContactContentAdmin(admin.ModelAdmin):
+    list_display = ('__str__', 'location_title')
+

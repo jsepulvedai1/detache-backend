@@ -171,3 +171,32 @@ class TeacherPhotoUploadView(View):
             })
         except Exception as e:
             return JsonResponse({"status": "ERROR", "message": str(e)}, status=500)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class MediaUploadView(View):
+    def post(self, request, *args, **kwargs):
+        try:
+            upload_file = request.FILES.get('file')
+            if not upload_file:
+                return JsonResponse({"status": "ERROR", "message": "Missing file"}, status=400)
+            
+            from django.core.files.storage import default_storage
+            from django.core.files.base import ContentFile
+            import uuid
+            import os
+
+            ext = os.path.splitext(upload_file.name)[1]
+            filename = f"web_{uuid.uuid4().hex}{ext}"
+            
+            # Save under media/web/
+            saved_path = default_storage.save(f"web/{filename}", ContentFile(upload_file.read()))
+            url = default_storage.url(saved_path)
+
+            return JsonResponse({
+                "status": "SUCCESS", 
+                "url": url
+            })
+        except Exception as e:
+            return JsonResponse({"status": "ERROR", "message": str(e)}, status=500)
+
