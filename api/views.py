@@ -144,3 +144,30 @@ class WhatsAppWebhookView(View):
             print(f"Lesson {lesson_id} cancelled via WhatsApp.")
         except Lesson.DoesNotExist:
             print(f"Lesson {lesson_id} not found.")
+
+@method_decorator(csrf_exempt, name='dispatch')
+class TeacherPhotoUploadView(View):
+    def post(self, request, *args, **kwargs):
+        try:
+            teacher_id = request.POST.get('teacher_id')
+            photo_file = request.FILES.get('photo')
+            if not teacher_id or not photo_file:
+                return JsonResponse({"status": "ERROR", "message": "Missing teacher_id or photo file"}, status=400)
+            
+            from .models import Teacher
+            try:
+                teacher = Teacher.objects.get(pk=teacher_id)
+            except Teacher.DoesNotExist:
+                return JsonResponse({"status": "ERROR", "message": f"Teacher with id {teacher_id} does not exist"}, status=404)
+            
+            # Save the photo
+            teacher.photo = photo_file
+            teacher.save()
+            
+            photo_url = teacher.photo.url if teacher.photo else None
+            return JsonResponse({
+                "status": "SUCCESS", 
+                "photoUrl": photo_url
+            })
+        except Exception as e:
+            return JsonResponse({"status": "ERROR", "message": str(e)}, status=500)
