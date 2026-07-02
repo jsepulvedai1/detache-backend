@@ -117,6 +117,7 @@ class HomepageContentType(DjangoObjectType):
             "testimonials",
             "location_title", "location_description", "location_address", "location_address_detail", "location_map_url",
             "final_cta_title", "final_cta_description", "final_cta_button_text",
+            "planes_title", "planes_description", "instruments_title", "instruments_description", "gallery_title", "gallery_images",
         )
 
 class AboutContentType(DjangoObjectType):
@@ -922,6 +923,12 @@ class UpdateHomepageContent(graphene.Mutation):
         final_cta_title = graphene.String()
         final_cta_description = graphene.String()
         final_cta_button_text = graphene.String()
+        planes_title = graphene.String()
+        planes_description = graphene.String()
+        instruments_title = graphene.String()
+        instruments_description = graphene.String()
+        gallery_title = graphene.String()
+        gallery_images = graphene.String()  # JSON string
 
     success = graphene.Boolean()
     homepage = graphene.Field(HomepageContentType)
@@ -929,7 +936,7 @@ class UpdateHomepageContent(graphene.Mutation):
     def mutate(self, info, **kwargs):
         import json
         homepage = HomepageContent.get_singleton()
-        json_fields = {'features', 'method_items', 'testimonials'}
+        json_fields = {'features', 'method_items', 'testimonials', 'gallery_images'}
         for field, value in kwargs.items():
             if field in json_fields:
                 setattr(homepage, field, json.loads(value))

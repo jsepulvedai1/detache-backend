@@ -54,6 +54,18 @@ class HomepageContent(models.Model):
     final_cta_description = models.TextField(default='Déjanos tus datos y te contactaremos para agendar tu primera experiencia.')
     final_cta_button_text = models.CharField(max_length=100, default='Solicitar Clase de Prueba')
 
+    # Planes Section
+    planes_title = models.CharField(max_length=255, default='Nuestros Planes')
+    planes_description = models.TextField(default='Haz espacio para la música en tu vida y encuentra el programa perfecto para ti.')
+
+    # Instruments Section
+    instruments_title = models.CharField(max_length=255, default='Aprende con Nosotros')
+    instruments_description = models.TextField(default='La música comienza con una primera nota. Nosotros te acompañamos en el resto del camino.')
+
+    # Gallery Section
+    gallery_title = models.CharField(max_length=255, default='LA MÚSICA COMO NUNCA TE LA HABÍAN EXPLICADO')
+    gallery_images = models.JSONField(default=list)
+
     class Meta:
         verbose_name = "Contenido del Homepage"
 
@@ -77,6 +89,12 @@ class HomepageContent(models.Model):
                 {"quote": "Increíble experiencia. El sistema de reservas es súper fácil y mi profesor es un genio.", "author": "Carolina R."},
                 {"quote": "Nunca creí que aprendería tan rápido. La metodología es completamente diferente.", "author": "Matías V."},
                 {"quote": "Lo mejor de Santiago para aprender piano. Instalaciones de primer nivel.", "author": "Sofía M."}
+            ],
+            'gallery_images': [
+                "/imagesfooter/1.png",
+                "/imagesfooter/2.png",
+                "/imagesfooter/3.png",
+                "/imagesfooter/4.png"
             ]
         })
         return obj
