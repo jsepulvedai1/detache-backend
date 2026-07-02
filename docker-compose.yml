@@ -60,6 +60,9 @@ services:
       redis:
         condition: service_started
 
+    volumes:
+      - media_data:/app/media
 
 volumes:
   postgres_data:
+  media_data:
