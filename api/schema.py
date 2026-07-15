@@ -1,14 +1,14 @@
 import graphene
 from django.utils import timezone
 from graphene_django import DjangoObjectType
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings
 
 # --- Object Types ---
 
 class TeacherType(DjangoObjectType):
     class Meta:
         model = Teacher
-        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number")
+        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number", "rut", "address", "email")
 
     def resolve_photo(self, info):
         if self.photo:
@@ -63,7 +63,7 @@ class RoomType(DjangoObjectType):
 class LessonType(DjangoObjectType):
     class Meta:
         model = Lesson
-        fields = ("id", "teacher", "student", "room", "date", "start_time", "end_time", "status", "lesson_type", "is_pre_reservation")
+        fields = ("id", "teacher", "student", "lead", "room", "date", "start_time", "end_time", "status", "lesson_type", "is_pre_reservation")
 
 class PlanType(DjangoObjectType):
     class Meta:
@@ -149,10 +149,21 @@ class ClassTypeType(DjangoObjectType):
             "allowed_levels", "allowed_modalities", "what_you_will_learn", "teachers"
         )
 
+class GlobalSettingsType(DjangoObjectType):
+    class Meta:
+        model = GlobalSettings
+        fields = (
+            "id", "phone_number", "email_contact", "address",
+            "opening_hours_weekdays", "opening_hours_saturdays",
+            "facebook_url", "instagram_url", "trial_class_email_template"
+        )
+
 # --- Queries ---
 
 class Query(graphene.ObjectType):
     hello = graphene.String(default_value="Hello, this is the Detache backend with GraphQL!")
+    
+    global_settings = graphene.Field(GlobalSettingsType)
     
     # Teachers
     all_teachers = graphene.List(TeacherType)
@@ -267,6 +278,9 @@ class Query(graphene.ObjectType):
     def resolve_contact_content(self, info):
         return ContactContent.get_singleton()
 
+    def resolve_global_settings(self, info):
+        return GlobalSettings.get_singleton()
+
     def resolve_all_class_types(self, info):
         return ClassType.objects.all()
 
@@ -309,15 +323,21 @@ class CreateTeacher(graphene.Mutation):
         description = graphene.String()
         status = graphene.String()
         phone_number = graphene.String()
+        rut = graphene.String()
+        address = graphene.String()
+        email = graphene.String()
         specialty_ids = graphene.List(graphene.Int)
 
     teacher = graphene.Field(TeacherType)
-    def mutate(self, info, name, description="", status="ACTIVE", phone_number=None, specialty_ids=None):
+    def mutate(self, info, name, description="", status="ACTIVE", phone_number=None, rut=None, address=None, email=None, specialty_ids=None):
         teacher = Teacher.objects.create(
             name=name, 
             description=description, 
             status=status,
-            phone_number=phone_number
+            phone_number=phone_number,
+            rut=rut,
+            address=address,
+            email=email
         )
         if specialty_ids:
             teacher.specialties.set(specialty_ids)
@@ -330,17 +350,23 @@ class UpdateTeacher(graphene.Mutation):
         description = graphene.String()
         status = graphene.String()
         phone_number = graphene.String()
+        rut = graphene.String()
+        address = graphene.String()
+        email = graphene.String()
         specialty_ids = graphene.List(graphene.Int)
 
     teacher = graphene.Field(TeacherType)
 
-    def mutate(self, info, id, name=None, description=None, status=None, phone_number=None, specialty_ids=None):
+    def mutate(self, info, id, name=None, description=None, status=None, phone_number=None, rut=None, address=None, email=None, specialty_ids=None):
         try:
             teacher = Teacher.objects.get(pk=id)
             if name is not None: teacher.name = name
             if description is not None: teacher.description = description
             if status is not None: teacher.status = status
             if phone_number is not None: teacher.phone_number = phone_number
+            if rut is not None: teacher.rut = rut
+            if address is not None: teacher.address = address
+            if email is not None: teacher.email = email
             if specialty_ids is not None:
                 teacher.specialties.set(specialty_ids)
             teacher.save()
@@ -426,6 +452,65 @@ class CreateStudent(graphene.Mutation):
         )
         return CreateStudent(student=student)
 
+class UpdateStudent(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String()
+        rut = graphene.String()
+        birth_date = graphene.Date()
+        guardian_name = graphene.String()
+        guardian_phone = graphene.String()
+        status = graphene.String()
+        phone_number = graphene.String()
+        level = graphene.String()
+        primary_instrument_id = graphene.Int()
+
+    student = graphene.Field(StudentType)
+
+    def mutate(self, info, id, name=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, phone_number=None, level=None, primary_instrument_id=None):
+        try:
+            student = Student.objects.get(pk=id)
+            if name is not None: student.name = name
+            if rut is not None: student.rut = rut
+            if birth_date is not None: student.birth_date = birth_date
+            if guardian_name is not None: student.guardian_name = guardian_name
+            if guardian_phone is not None: student.guardian_phone = guardian_phone
+            if status is not None: student.status = status
+            if phone_number is not None: student.phone_number = phone_number
+            if level is not None: student.level = level
+            if primary_instrument_id is not None:
+                student.primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first()
+            student.save()
+            return UpdateStudent(student=student)
+        except Student.DoesNotExist:
+            return UpdateStudent(student=None)
+
+class UpdateGlobalSettings(graphene.Mutation):
+    class Arguments:
+        phone_number = graphene.String()
+        email_contact = graphene.String()
+        address = graphene.String()
+        opening_hours_weekdays = graphene.String()
+        opening_hours_saturdays = graphene.String()
+        facebook_url = graphene.String()
+        instagram_url = graphene.String()
+        trial_class_email_template = graphene.String()
+
+    global_settings = graphene.Field(GlobalSettingsType)
+
+    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_email_template=None):
+        settings = GlobalSettings.get_singleton()
+        if phone_number is not None: settings.phone_number = phone_number
+        if email_contact is not None: settings.email_contact = email_contact
+        if address is not None: settings.address = address
+        if opening_hours_weekdays is not None: settings.opening_hours_weekdays = opening_hours_weekdays
+        if opening_hours_saturdays is not None: settings.opening_hours_saturdays = opening_hours_saturdays
+        if facebook_url is not None: settings.facebook_url = facebook_url
+        if instagram_url is not None: settings.instagram_url = instagram_url
+        if trial_class_email_template is not None: settings.trial_class_email_template = trial_class_email_template
+        settings.save()
+        return UpdateGlobalSettings(global_settings=settings)
+
 class SendWhatsApp(graphene.Mutation):
     class Arguments:
         phone_number = graphene.String(required=True)
@@ -472,14 +557,73 @@ class CreateLead(graphene.Mutation):
     lead = graphene.Field(LeadType)
 
     def mutate(self, info, nombre, telefono, email=None, edad=None, servicio='CLASE_PRUEBA', fuente='WEB'):
+        parsed_res = None
+        if email and "|" in email:
+            try:
+                parts = [p.strip() for p in email.split("|")]
+                real_email = parts[0]
+                
+                info_dict = {}
+                for part in parts[1:]:
+                    if ":" in part:
+                        k, v = part.split(":", 1)
+                        info_dict[k.strip().lower()] = v.strip()
+                        
+                profesor_name = info_dict.get('profesor')
+                fecha_str = info_dict.get('fecha')
+                horario_str = info_dict.get('horario')
+                
+                if profesor_name and fecha_str and horario_str:
+                    times = horario_str.split("-")
+                    start_time_str = times[0].strip()
+                    end_time_str = times[1].strip()
+                    parsed_res = {
+                        'email': real_email,
+                        'profesor': profesor_name,
+                        'fecha': fecha_str,
+                        'start_time': start_time_str,
+                        'end_time': end_time_str
+                    }
+            except Exception as e:
+                print(f"Error parsing email details in CreateLead: {e}")
+
+        lead_email = parsed_res['email'] if parsed_res else email
+
         lead = Lead.objects.create(
             nombre=nombre,
             telefono=telefono,
-            email=email,
+            email=lead_email,
             edad=edad,
             servicio=servicio,
             fuente=fuente
         )
+
+        if parsed_res:
+            try:
+                from datetime import datetime
+                teacher = Teacher.objects.filter(name__icontains=parsed_res['profesor']).first()
+                if not teacher:
+                    teacher = Teacher.objects.first()
+                
+                if teacher:
+                    parsed_date = datetime.strptime(parsed_res['fecha'], "%Y-%m-%d").date()
+                    start_t = datetime.strptime(parsed_res['start_time'], "%H:%M").time()
+                    end_t = datetime.strptime(parsed_res['end_time'], "%H:%M").time()
+                    
+                    Lesson.objects.create(
+                        teacher=teacher,
+                        lead=lead,
+                        student=None,
+                        date=parsed_date,
+                        start_time=start_t,
+                        end_time=end_t,
+                        status='PENDING',
+                        is_pre_reservation=True,
+                        lesson_type='INDIVIDUAL'
+                    )
+            except Exception as lesson_err:
+                print(f"Error creating pre-reservation lesson: {lesson_err}")
+
         try:
             OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
         except Exception as ws_err:
@@ -500,14 +644,14 @@ class ConvertLeadToStudent(graphene.Mutation):
             if lead.estado == 'CONCRETADO':
                 return ConvertLeadToStudent(success=False, student=None)
 
-            # Create Student
             student = Student.objects.create(
                 name=lead.nombre,
                 phone_number=lead.telefono,
                 status='ACTIVE'
             )
             
-            # Update Lead string state
+            Lesson.objects.filter(lead=lead).update(student=student, is_pre_reservation=False)
+            
             lead.estado = 'CONCRETADO'
             lead.save()
             return ConvertLeadToStudent(success=True, student=student)
@@ -1189,6 +1333,8 @@ class Mutation(graphene.ObjectType):
     create_room = CreateRoom.Field()
     update_room = UpdateRoom.Field()
     delete_room = DeleteRoom.Field()
+    update_student = UpdateStudent.Field()
+    update_global_settings = UpdateGlobalSettings.Field()
 
 
 import channels_graphql_ws

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings
 
 class LeadNoteInline(admin.TabularInline):
     model = LeadNote
@@ -26,8 +26,8 @@ class PaymentAdmin(admin.ModelAdmin):
 
 @admin.register(Teacher)
 class TeacherAdmin(admin.ModelAdmin):
-    list_display = ('name', 'status')
-    search_fields = ('name',)
+    list_display = ('name', 'rut', 'email', 'status')
+    search_fields = ('name', 'rut', 'email')
     list_filter = ('status', 'specialties')
     filter_horizontal = ('specialties',)
 
@@ -97,4 +97,10 @@ class AboutContentAdmin(admin.ModelAdmin):
 @admin.register(ContactContent)
 class ContactContentAdmin(admin.ModelAdmin):
     list_display = ('__str__', 'location_title')
+
+
+@admin.register(GlobalSettings)
+class GlobalSettingsAdmin(admin.ModelAdmin):
+    list_display = ('__str__', 'phone_number', 'email_contact')
+
 

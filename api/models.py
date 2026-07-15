@@ -188,6 +188,9 @@ class Teacher(models.Model):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='ACTIVE')
     specialties = models.ManyToManyField(Specialty, related_name='teachers', blank=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
+    rut = models.CharField(max_length=20, blank=True, null=True)
+    address = models.CharField(max_length=255, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
 
     def __str__(self):
         return self.name
@@ -283,8 +286,9 @@ class Lesson(models.Model):
         ('ENSEMBLE', 'Ensemble'),
     ]
     teacher = models.ForeignKey(Teacher, related_name='lessons', on_delete=models.CASCADE)
-    student = models.ForeignKey(Student, related_name='lessons', on_delete=models.CASCADE)
-    room = models.ForeignKey(Room, related_name='lessons', on_delete=models.SET_NULL, null=True)
+    student = models.ForeignKey(Student, related_name='lessons', on_delete=models.CASCADE, null=True, blank=True)
+    lead = models.ForeignKey(Lead, related_name='lessons', on_delete=models.SET_NULL, null=True, blank=True)
+    room = models.ForeignKey(Room, related_name='lessons', on_delete=models.SET_NULL, null=True, blank=True)
     date = models.DateField()
     start_time = models.TimeField()
     end_time = models.TimeField()
@@ -296,7 +300,8 @@ class Lesson(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.lesson_type} - {self.student.name} with {self.teacher.name} on {self.date}"
+        student_name = self.student.name if self.student else (self.lead.nombre if self.lead else "No student/lead")
+        return f"{self.lesson_type} - {student_name} with {self.teacher.name} on {self.date}"
 
 # ─── BILLING & PACKS ───
 class Plan(models.Model):
@@ -511,4 +516,30 @@ class ContactContent(models.Model):
     def get_singleton(cls):
         obj, created = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class GlobalSettings(models.Model):
+    """Singleton model – only one row ever exists (id=1)."""
+    phone_number = models.CharField(max_length=20, default='+56 9 6427 9239')
+    email_contact = models.EmailField(default='academia@detache.cl')
+    address = models.CharField(max_length=255, default='Gran Avenida José Miguel Carrera 8520, Oficina C, La Cisterna')
+    opening_hours_weekdays = models.CharField(max_length=100, default='9:00 - 20:00')
+    opening_hours_saturdays = models.CharField(max_length=100, default='10:00 - 14:00')
+    facebook_url = models.CharField(max_length=255, default='https://facebook.com')
+    instagram_url = models.CharField(max_length=255, default='https://instagram.com/academia.detache')
+    trial_class_email_template = models.TextField(
+        default='Hola {nombre},\n\nHemos recibido tu pre-reserva de Clase de Prueba con {profesor} para el {fecha} a las {hora}.\n\nPor favor, ten en cuenta que para confirmar tu cupo debes realizar el pago antes de las 20:00 hrs de hoy. De lo contrario, el horario quedará liberado automáticamente.\n\nSaludos,\nAcademia Détaché'
+    )
+
+    class Meta:
+        verbose_name = "Configuración Global"
+
+    def __str__(self):
+        return "Configuración Global (singleton)"
+
+    @classmethod
+    def get_singleton(cls):
+        obj, created = cls.objects.get_or_create(pk=1)
+        return obj
+
 
