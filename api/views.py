@@ -200,3 +200,135 @@ class MediaUploadView(View):
         except Exception as e:
             return JsonResponse({"status": "ERROR", "message": str(e)}, status=500)
 
+
+@method_decorator(csrf_exempt, name='dispatch')
+class MercadoPagoWebhookView(View):
+    def post(self, request, *args, **kwargs):
+        import os
+        import json
+        import requests
+        from django.utils import timezone
+        from .models import Lead, Student, StudentPack, Plan, Payment, Lesson
+        
+        print("--- MERCADOPAGO WEBHOOK RECEIVED ---")
+        try:
+            data = {}
+            if request.body:
+                try:
+                    data = json.loads(request.body.decode('utf-8'))
+                except Exception as parse_err:
+                    print(f"Could not parse body JSON: {parse_err}")
+            
+            action = data.get("action")
+            event_type = data.get("type")
+            data_info = data.get("data", {})
+            payment_id = data_info.get("id")
+            
+            # Fallback to query params
+            if not payment_id:
+                payment_id = request.GET.get("data.id")
+            if not event_type:
+                event_type = request.GET.get("type")
+            
+            print(f"Webhook event_type: {event_type}, payment_id: {payment_id}")
+            
+            if event_type == "payment" and payment_id:
+                # Retrieve the full payment info
+                token = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "TEST-4651592514397603-071517-68bc59d1e7da5ac1c14335ee790d8a44-2375919242")
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+                
+                pay_resp = requests.get(
+                    f"https://api.mercadopago.com/v1/payments/{payment_id}",
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if pay_resp.status_code == 200:
+                    pay_data = pay_resp.json()
+                    status = pay_data.get("status")
+                    transaction_amount = pay_data.get("transaction_amount")
+                    external_reference = pay_data.get("external_reference")
+                    
+                    print(f"Payment {payment_id} Status: {status}, ExtRef: {external_reference}, Amount: {transaction_amount}")
+                    
+                    if status == "approved" and external_reference:
+                        # Parse external_reference: format "lead_id:X|plan_id:Y"
+                        try:
+                            ref_parts = dict(part.split(":") for part in external_reference.split("|"))
+                            lead_id = ref_parts.get("lead_id")
+                            plan_id = ref_parts.get("plan_id")
+                        except Exception as parse_ref_err:
+                            print(f"Error parsing external reference: {parse_ref_err}")
+                            return JsonResponse({"status": "ERROR", "message": "Invalid external reference format"}, status=400)
+                        
+                        if lead_id and plan_id:
+                            lead = Lead.objects.get(pk=int(lead_id))
+                            plan = Plan.objects.get(pk=int(plan_id))
+                            
+                            # Check if Student already exists or create one
+                            student = None
+                            if lead.telefono:
+                                # Match by last 8 digits of phone
+                                clean_phone = lead.telefono[-8:]
+                                student = Student.objects.filter(phone_number__icontains=clean_phone).first()
+                            
+                            if not student:
+                                student = Student.objects.filter(name__iexact=lead.nombre).first()
+                            
+                            if not student:
+                                student = Student.objects.create(
+                                    name=lead.nombre,
+                                    phone_number=lead.telefono,
+                                    status='ACTIVE'
+                                )
+                                print(f"Webhook created new student {student.name} for lead {lead.id}")
+                            
+                            # Convert any lessons
+                            lessons_updated = Lesson.objects.filter(lead=lead).update(student=student, is_pre_reservation=False)
+                            print(f"Webhook converted {lessons_updated} lessons to student {student.id}")
+                            
+                            # Mark Lead as concreted
+                            lead.estado = 'CONCRETADO'
+                            lead.save()
+                            
+                            # Check if payment already recorded to prevent duplicates
+                            existing_payment = Payment.objects.filter(description__icontains=payment_id).first()
+                            if not existing_payment:
+                                pack = StudentPack.objects.create(
+                                    student=student,
+                                    plan=plan,
+                                    purchase_date=timezone.now()
+                                )
+                                print(f"Webhook created student pack {pack.id} for plan {plan.name}")
+                                
+                                # Register approved payment
+                                Payment.objects.create(
+                                    student=student,
+                                    amount=float(transaction_amount),
+                                    method='CARD',
+                                    description=f"Pago aprobado por Mercado Pago (ID: {payment_id}) para {plan.name}",
+                                    pack=pack
+                                )
+                                print(f"Webhook registered payment for student {student.name}")
+                                
+                                # Broadcast updates to leads view
+                                try:
+                                    from api.schema import OnLeadUpdated
+                                    OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+                                except Exception as ws_err:
+                                    print(f"Error broadcasting lead update: {ws_err}")
+                            else:
+                                print(f"Payment {payment_id} was already processed.")
+                else:
+                    print(f"Error calling MP Payment API: {pay_resp.status_code} - {pay_resp.text}")
+                    
+            return JsonResponse({"status": "SUCCESS"})
+        except Exception as e:
+            print(f"MercadoPago Webhook Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return JsonResponse({"status": "ERROR", "message": str(e)}, status=400)
+

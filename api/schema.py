@@ -1293,6 +1293,101 @@ class DeleteRoom(graphene.Mutation):
             return DeleteRoom(success=False)
 
 
+class CreatePaymentPreference(graphene.Mutation):
+    class Arguments:
+        plan_id = graphene.Int(required=True)
+        name = graphene.String(required=True)
+        email = graphene.String(required=True)
+        phone = graphene.String(required=True)
+        back_url = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    preference_id = graphene.String()
+    init_point = graphene.String()
+
+    def mutate(self, info, plan_id, name, email, phone, back_url):
+        import os
+        import requests
+        try:
+            # 1. Fetch the plan
+            plan = Plan.objects.get(pk=plan_id)
+            
+            # 2. Create or update the Lead to track payment initiation
+            lead = Lead.objects.filter(email=email).first()
+            if not lead:
+                lead = Lead.objects.create(
+                    nombre=name,
+                    email=email,
+                    telefono=phone,
+                    fuente='WEB',
+                    estado='NUEVO'
+                )
+            else:
+                lead.nombre = name
+                lead.telefono = phone
+                lead.save()
+
+            # 3. Request preference from Mercado Pago
+            token = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "TEST-4651592514397603-071517-68bc59d1e7da5ac1c14335ee790d8a44-2375919242")
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            preference_data = {
+                "items": [
+                    {
+                        "title": f"Plan {plan.name} - Détaché",
+                        "quantity": 1,
+                        "unit_price": float(plan.price),
+                        "currency_id": "CLP"
+                    }
+                ],
+                "payer": {
+                    "name": name,
+                    "email": email,
+                    "phone": {
+                        "number": phone.replace("+56", "")
+                    }
+                },
+                "back_urls": {
+                    "success": f"{back_url}/checkout/success",
+                    "pending": f"{back_url}/checkout/pending",
+                    "failure": f"{back_url}/checkout/failure"
+                },
+                "auto_return": "approved",
+                "external_reference": f"lead_id:{lead.id}|plan_id:{plan.id}"
+            }
+            
+            response = requests.post(
+                "https://api.mercadopago.com/checkout/preferences",
+                headers=headers,
+                json=preference_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                res_data = response.json()
+                pref_id = res_data.get("id")
+                # Use sandbox init point if sandbox token, otherwise live init point
+                init_pt = res_data.get("sandbox_init_point") if "TEST" in token else res_data.get("init_point")
+                if not init_pt:
+                    init_pt = res_data.get("sandbox_init_point") or res_data.get("init_point")
+                
+                return CreatePaymentPreference(
+                    success=True,
+                    preference_id=pref_id,
+                    init_point=init_pt
+                )
+            else:
+                print(f"Mercado Pago API error: {response.status_code} - {response.text}")
+                return CreatePaymentPreference(success=False, preference_id=None, init_point=None)
+                
+        except Exception as e:
+            print(f"Error creating payment preference: {e}")
+            return CreatePaymentPreference(success=False, preference_id=None, init_point=None)
+
+
 class Mutation(graphene.ObjectType):
     create_lesson = CreateLesson.Field()
     create_student = CreateStudent.Field()
@@ -1335,6 +1430,7 @@ class Mutation(graphene.ObjectType):
     delete_room = DeleteRoom.Field()
     update_student = UpdateStudent.Field()
     update_global_settings = UpdateGlobalSettings.Field()
+    create_payment_preference = CreatePaymentPreference.Field()
 
 
 import channels_graphql_ws

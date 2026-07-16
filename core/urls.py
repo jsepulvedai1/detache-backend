@@ -20,7 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from graphene_django.views import GraphQLView
 from django.conf import settings
 from django.conf.urls.static import static
-from api.views import WhatsAppWebhookView, TeacherPhotoUploadView, MediaUploadView
+from api.views import WhatsAppWebhookView, TeacherPhotoUploadView, MediaUploadView, MercadoPagoWebhookView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -28,6 +28,7 @@ urlpatterns = [
     path('api/whatsapp/webhook/', WhatsAppWebhookView.as_view(), name='whatsapp_webhook'),
     path('api/teachers/upload-photo/', TeacherPhotoUploadView.as_view(), name='teacher_photo_upload'),
     path('api/media/upload/', MediaUploadView.as_view(), name='media_upload'),
+    path('api/mercadopago/webhook/', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook'),
 ]
 
 if settings.DEBUG:

@@ -54,6 +54,8 @@ services:
       - EVOLUTION_INSTANCE_NAME=MainInstance
       - OLLAMA_URL=http://host.docker.internal:11434/api/generate
       - OLLAMA_MODEL=llama3.2:3b
+      - MERCADOPAGO_ACCESS_TOKEN=TEST-4651592514397603-071517-68bc59d1e7da5ac1c14335ee790d8a44-2375919242
+      - MERCADOPAGO_PUBLIC_KEY=TEST-49133521-a5d1-4250-ad03-c011a59ac1e2
     depends_on:
       db:
         condition: service_healthy
