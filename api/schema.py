@@ -1326,6 +1326,12 @@ class CreatePaymentPreference(graphene.Mutation):
             
             print(f"DEBUG: CreatePaymentPreference clean back_url is '{back_url}'")
             
+            # Mercado Pago API rejects localhost/127.0.0.1 domains when auto_return is enabled.
+            # We map local environments to the public Vercel test domain for validation.
+            if "localhost" in back_url or "127.0.0.1" in back_url:
+                back_url = "https://pianoacademy-git-main-jsepulvedai1s-projects.vercel.app"
+                print(f"DEBUG: Replaced local back_url with Vercel test domain: '{back_url}'")
+            
             # 2. Create or update the Lead to track payment initiation
             lead = Lead.objects.filter(email=email).first()
             if not lead:
