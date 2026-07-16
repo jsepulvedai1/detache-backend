@@ -21,67 +21,87 @@ class WhatsAppWebhookView(View):
             if event_type == 'messages_upsert':
                 print(f"Evento Detectado: messages.upsert")
                 message_data = data.get('data', {})
+                key_data = message_data.get('key', {})
+                msg_id = key_data.get('id', '')
+                from_me = key_data.get('fromMe', False)
+                remote_jid = key_data.get('remoteJid', '')
+                phone_number = remote_jid.split('@')[0]
+                
+                # Check for buttons or text response triggers
                 msg = message_data.get('message', {})
                 buttons_response = msg.get('buttonsResponseMessage')
                 list_response = msg.get('listResponseMessage')
-                # Also handle text messages
-                text_content = msg.get('conversation', '')
-                
-                remote_jid = message_data.get('key', {}).get('remoteJid', '')
-                phone_number = remote_jid.split('@')[0]
+                text_content = msg.get('conversation') or msg.get('extendedTextMessage', {}).get('text') or ""
 
                 if buttons_response:
                     button_id = buttons_response.get('selectedButtonId')
                     self.process_button_id(button_id)
-                elif list_response:
-                    # Handle list response
-                    pass
                 elif text_content:
-                    print(f"Webhook: Mensaje de texto recibido: '{text_content}' de {phone_number}")
-                    # Handle "1" or "2" text response
                     text_strip = text_content.strip()
                     if text_strip == "1":
                         self.confirm_last_lesson(phone_number)
                     elif text_strip == "2":
                         self.cancel_last_lesson(phone_number)
-                    else:
-                        from .models import Student, Lead
-                        from django.utils import timezone
-                        
-                        # 1. Check if it's an active Student
-                        student = Student.objects.filter(phone_number__icontains=phone_number).first()
-                        if student:
-                            print(f"Webhook: Mensaje de alumno registrado ({student.name})")
+
+                # Save to ChatMessage database if not duplicated
+                from .models import ChatMessage, Student, Lead
+                
+                if msg_id and ChatMessage.objects.filter(message_id=msg_id).exists():
+                    print(f"Webhook: Mensaje duplicado recibido, ignorando: {msg_id}")
+                else:
+                    if not text_content:
+                        if buttons_response:
+                            text_content = f"[Botón seleccionado]: {buttons_response.get('selectedDisplayText') or buttons_response.get('selectedButtonId')}"
+                        elif 'imageMessage' in msg:
+                            text_content = "[Imagen]"
+                        elif 'documentMessage' in msg:
+                            text_content = "[Documento]"
+                        elif 'audioMessage' in msg:
+                            text_content = "[Audio]"
                         else:
-                            # 2. Check if it's an existing Lead
-                            lead = Lead.objects.filter(telefono__icontains=phone_number).first()
-                            if lead:
-                                print(f"Webhook: Mensaje de lead existente ({lead.nombre})")
-                                if lead.estado == 'NUEVO':
-                                    lead.estado = 'CONTACTADO'
-                                lead.fecha_ultimo_contacto = timezone.now()
-                                lead.save()
-                                # WebSocket broadcast
-                                try:
-                                    from api.schema import OnLeadUpdated
-                                    OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
-                                except Exception as ws_err:
-                                    print(f"Error broadcasting lead update: {ws_err}")
-                            else:
-                                # 3. Create a new Lead
-                                print(f"Webhook: Creando nuevo lead para {phone_number}")
-                                lead = Lead.objects.create(
-                                    nombre=f"Contacto WA {phone_number}",
-                                    telefono=phone_number,
-                                    fuente='WHATSAPP',
-                                    estado='NUEVO'
-                                )
-                                # WebSocket broadcast
-                                try:
-                                    from api.schema import OnLeadUpdated
-                                    OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
-                                except Exception as ws_err:
-                                    print(f"Error broadcasting new lead: {ws_err}")
+                            text_content = ""
+
+                    if text_content:
+                        # Find or create corresponding lead/student using last 8 digits
+                        clean_num = phone_number[-8:] if len(phone_number) >= 8 else phone_number
+                        student = Student.objects.filter(phone_number__icontains=clean_num).first()
+                        lead = Lead.objects.filter(telefono__icontains=clean_num).first()
+                        
+                        if not student and not lead:
+                            print(f"Webhook: Creando nuevo lead para {phone_number}")
+                            lead = Lead.objects.create(
+                                nombre=f"Contacto WA {phone_number}",
+                                telefono=phone_number,
+                                fuente='WHATSAPP',
+                                estado='NUEVO'
+                            )
+                            try:
+                                from api.schema import OnLeadUpdated
+                                OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
+                            except Exception as ws_err:
+                                print(f"Error broadcasting new lead: {ws_err}")
+                        elif lead:
+                            if lead.estado == 'NUEVO':
+                                lead.estado = 'CONTACTADO'
+                            lead.fecha_ultimo_contacto = timezone.now()
+                            lead.save()
+                            try:
+                                from api.schema import OnLeadUpdated
+                                OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+                            except Exception as ws_err:
+                                print(f"Error broadcasting lead update: {ws_err}")
+
+                        sender = 'ACADEMY' if from_me else ('STUDENT' if student else 'LEAD')
+                        
+                        ChatMessage.objects.create(
+                            lead=lead,
+                            student=student,
+                            phone_number=phone_number,
+                            sender=sender,
+                            message_text=text_content,
+                            message_id=msg_id
+                        )
+                        print(f"Webhook: Guardado mensaje de {sender} para {phone_number}: {text_content}")
 
 
 
@@ -281,6 +301,7 @@ class MercadoPagoWebhookView(View):
                             if not student:
                                 student = Student.objects.create(
                                     name=lead.nombre,
+                                    email=lead.email,
                                     phone_number=lead.telefono,
                                     status='ACTIVE'
                                 )
@@ -314,6 +335,13 @@ class MercadoPagoWebhookView(View):
                                 )
                                 print(f"Webhook registered payment for student {student.name}")
                                 
+                                # Send purchase notifications (email & WhatsApp)
+                                try:
+                                    from .whatsapp import WhatsAppService
+                                    WhatsAppService.send_purchase_notifications(student, plan, transaction_amount)
+                                except Exception as notif_err:
+                                    print(f"Error triggering purchase notifications: {notif_err}")
+
                                 # Broadcast updates to leads view
                                 try:
                                     from api.schema import OnLeadUpdated

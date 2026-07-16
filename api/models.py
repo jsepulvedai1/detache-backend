@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.contrib.auth.models import User
 
 # ─── CMS (WEB CONTENT) ───
 class LandingPage(models.Model):
@@ -229,6 +230,7 @@ class Student(models.Model):
         ('ADVANCED', 'Advanced'),
     ]
     name = models.CharField(max_length=255)
+    email = models.EmailField(blank=True, null=True)
     rut = models.CharField(max_length=20, blank=True, null=True)
     birth_date = models.DateField(blank=True, null=True)
     guardian_name = models.CharField(max_length=255, blank=True, null=True)
@@ -366,9 +368,13 @@ class AcademyTask(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     assigned_to = models.CharField(max_length=50, choices=ROLE_CHOICES, default='RECEPCION')
+    assigned_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_tasks')
     priority = models.CharField(max_length=50, choices=PRIORITY_CHOICES, default='RECORDATORIO')
     log = models.TextField(blank=True, null=True, help_text="Bitácora de acciones")
     is_completed = models.BooleanField(default=False)
+    due_date = models.DateField(blank=True, null=True)
+    duration = models.IntegerField(default=30, help_text="Duración estimada en minutos")
+    completed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -541,5 +547,44 @@ class GlobalSettings(models.Model):
     def get_singleton(cls):
         obj, created = cls.objects.get_or_create(pk=1)
         return obj
+
+
+from django.contrib.auth.models import User
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    role = models.CharField(max_length=50, default='STAFF')
+    allowed_sections = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.role}"
+
+class AuditLog(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    username = models.CharField(max_length=255)
+    action = models.CharField(max_length=255)
+    details = models.TextField(blank=True, null=True)
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    timestamp = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"{self.username} - {self.action} - {self.timestamp}"
+
+
+class ChatMessage(models.Model):
+    lead = models.ForeignKey('Lead', on_delete=models.SET_NULL, null=True, blank=True, related_name='chat_messages')
+    student = models.ForeignKey('Student', on_delete=models.SET_NULL, null=True, blank=True, related_name='chat_messages')
+    phone_number = models.CharField(max_length=50)
+    sender = models.CharField(max_length=50) # 'LEAD', 'STUDENT', 'ACADEMY'
+    message_text = models.TextField()
+    message_id = models.CharField(max_length=255, unique=True, blank=True, null=True)
+    timestamp = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['timestamp']
+
+    def __str__(self):
+        return f"{self.sender} -> {self.phone_number}: {self.message_text[:30]}"
+
 
 

@@ -1,9 +1,66 @@
 import graphene
 from django.utils import timezone
 from graphene_django import DjangoObjectType
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings
+from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings, UserProfile, AuditLog, ChatMessage
+from django.contrib.auth.models import User
+
+def log_user_action(info, action, details):
+    """
+    Utility function to record worker actions in the AuditLog database table.
+    """
+    user = getattr(info.context, 'user', None)
+    ip_addr = None
+    if info.context and hasattr(info.context, 'META'):
+        x_forwarded = info.context.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded:
+            ip_addr = x_forwarded.split(',')[0].strip()
+        else:
+            ip_addr = info.context.META.get('REMOTE_ADDR')
+            
+    username = "Anonymous"
+    user_obj = None
+    if user and user.is_authenticated:
+        username = user.username
+        user_obj = user
+
+    AuditLog.objects.create(
+        user=user_obj,
+        username=username,
+        action=action,
+        details=str(details),
+        ip_address=ip_addr
+    )
 
 # --- Object Types ---
+
+class UserProfileType(DjangoObjectType):
+    class Meta:
+        model = UserProfile
+        fields = ("id", "user", "role", "allowed_sections")
+
+class UserType(DjangoObjectType):
+    profile = graphene.Field(UserProfileType)
+
+    class Meta:
+        model = User
+        fields = ("id", "username", "email", "is_superuser", "is_staff")
+
+    def resolve_profile(self, info):
+        profile, created = UserProfile.objects.get_or_create(user=self)
+        if self.is_superuser and profile.role != 'ADMIN':
+            profile.role = 'ADMIN'
+            profile.save()
+        return profile
+
+class AuditLogType(DjangoObjectType):
+    class Meta:
+        model = AuditLog
+        fields = ("id", "user", "username", "action", "details", "ip_address", "timestamp")
+
+class ChatMessageType(DjangoObjectType):
+    class Meta:
+        model = ChatMessage
+        fields = ("id", "lead", "student", "phone_number", "sender", "message_text", "message_id", "timestamp")
 
 class TeacherType(DjangoObjectType):
     class Meta:
@@ -98,7 +155,7 @@ class PaymentType(DjangoObjectType):
 class AcademyTaskType(DjangoObjectType):
     class Meta:
         model = AcademyTask
-        fields = ("id", "title", "description", "assigned_to", "priority", "log", "is_completed", "created_at", "updated_at")
+        fields = ("id", "title", "description", "assigned_to", "assigned_user", "priority", "log", "is_completed", "due_date", "duration", "completed_at", "created_at", "updated_at")
 
 class LandingPageType(DjangoObjectType):
     class Meta:
@@ -164,7 +221,11 @@ class Query(graphene.ObjectType):
     hello = graphene.String(default_value="Hello, this is the Detache backend with GraphQL!")
     
     global_settings = graphene.Field(GlobalSettingsType)
-    
+    all_admin_accounts = graphene.List(UserType)
+    all_audit_logs = graphene.List(AuditLogType)
+    me = graphene.Field(UserType)
+    chat_messages = graphene.List(ChatMessageType, phone=graphene.String(required=True))
+
     # Teachers
     all_teachers = graphene.List(TeacherType)
     teacher_by_id = graphene.Field(TeacherType, id=graphene.Int(required=True))
@@ -286,6 +347,31 @@ class Query(graphene.ObjectType):
 
     def resolve_class_type_by_id(self, info, id):
         return ClassType.objects.filter(pk=id).first()
+
+    def resolve_all_admin_accounts(self, info):
+        user = getattr(info.context, 'user', None)
+        if not user or not (user.is_staff or user.is_superuser):
+            raise Exception("No autorizado (requiere rol de Colaborador).")
+        return User.objects.all()
+
+    def resolve_all_audit_logs(self, info):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_superuser:
+            raise Exception("No autorizado (requiere Admin Supremo).")
+        return AuditLog.objects.all().order_by('-timestamp')
+
+    def resolve_me(self, info):
+        user = getattr(info.context, 'user', None)
+        if user and user.is_authenticated:
+            return user
+        return None
+
+    def resolve_chat_messages(self, info, phone):
+        user = getattr(info.context, 'user', None)
+        if not user or not (user.is_staff or user.is_superuser):
+            raise Exception("No autorizado.")
+        clean_num = phone[-8:] if len(phone) >= 8 else phone
+        return ChatMessage.objects.filter(phone_number__icontains=clean_num).order_by('timestamp')
 
 # --- Mutations ---
 
@@ -426,6 +512,7 @@ class DeleteAvailability(graphene.Mutation):
 class CreateStudent(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
+        email = graphene.String()
         rut = graphene.String()
         birth_date = graphene.Date()
         guardian_name = graphene.String()
@@ -437,10 +524,11 @@ class CreateStudent(graphene.Mutation):
 
     student = graphene.Field(StudentType)
 
-    def mutate(self, info, name, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status="ACTIVE", phone_number=None, level="BEGINNER", primary_instrument_id=None):
+    def mutate(self, info, name, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status="ACTIVE", phone_number=None, level="BEGINNER", primary_instrument_id=None):
         primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first() if primary_instrument_id else None
         student = Student.objects.create(
             name=name,
+            email=email,
             rut=rut,
             birth_date=birth_date,
             guardian_name=guardian_name,
@@ -450,12 +538,14 @@ class CreateStudent(graphene.Mutation):
             level=level,
             primary_instrument=primary_instrument
         )
+        log_user_action(info, "CREATE_STUDENT", f"Registrado nuevo estudiante: {student.name} (ID: {student.id})")
         return CreateStudent(student=student)
 
 class UpdateStudent(graphene.Mutation):
     class Arguments:
         id = graphene.Int(required=True)
         name = graphene.String()
+        email = graphene.String()
         rut = graphene.String()
         birth_date = graphene.Date()
         guardian_name = graphene.String()
@@ -467,10 +557,11 @@ class UpdateStudent(graphene.Mutation):
 
     student = graphene.Field(StudentType)
 
-    def mutate(self, info, id, name=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, phone_number=None, level=None, primary_instrument_id=None):
+    def mutate(self, info, id, name=None, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, phone_number=None, level=None, primary_instrument_id=None):
         try:
             student = Student.objects.get(pk=id)
             if name is not None: student.name = name
+            if email is not None: student.email = email
             if rut is not None: student.rut = rut
             if birth_date is not None: student.birth_date = birth_date
             if guardian_name is not None: student.guardian_name = guardian_name
@@ -481,6 +572,7 @@ class UpdateStudent(graphene.Mutation):
             if primary_instrument_id is not None:
                 student.primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first()
             student.save()
+            log_user_action(info, "UPDATE_STUDENT", f"Actualizada ficha del estudiante: {student.name} (ID: {student.id})")
             return UpdateStudent(student=student)
         except Student.DoesNotExist:
             return UpdateStudent(student=None)
@@ -523,6 +615,29 @@ class SendWhatsApp(graphene.Mutation):
         from .whatsapp import WhatsAppService
         result = WhatsAppService.send_text_message(phone_number, message)
         if result:
+            from .models import ChatMessage, Student, Lead
+            
+            clean_num = phone_number[-8:] if len(phone_number) >= 8 else phone_number
+            student = Student.objects.filter(phone_number__icontains=clean_num).first()
+            lead = Lead.objects.filter(telefono__icontains=clean_num).first()
+            
+            # Save outgoing message to history
+            msg_id = None
+            if isinstance(result, dict):
+                # Try to resolve msg_id from Evolution API response format
+                msg_id = result.get('key', {}).get('id') or result.get('messageId')
+                
+            ChatMessage.objects.create(
+                lead=lead,
+                student=student,
+                phone_number=phone_number,
+                sender='ACADEMY',
+                message_text=message,
+                message_id=msg_id
+            )
+            
+            log_user_action(info, "SEND_WHATSAPP", f"Enviado mensaje WA a {phone_number}: {message[:50]}...")
+            
             import json
             return SendWhatsApp(success=True, response=json.dumps(result))
         return SendWhatsApp(success=False, response="Failed to send message")
@@ -628,6 +743,7 @@ class CreateLead(graphene.Mutation):
             OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
         except Exception as ws_err:
             print(f"Error broadcasting new lead: {ws_err}")
+        log_user_action(info, "CREATE_LEAD", f"Creado prospecto: {lead.nombre} (ID: {lead.id})")
         return CreateLead(lead=lead)
 
 
@@ -646,6 +762,7 @@ class ConvertLeadToStudent(graphene.Mutation):
 
             student = Student.objects.create(
                 name=lead.nombre,
+                email=lead.email,
                 phone_number=lead.telefono,
                 status='ACTIVE'
             )
@@ -654,6 +771,7 @@ class ConvertLeadToStudent(graphene.Mutation):
             
             lead.estado = 'CONCRETADO'
             lead.save()
+            log_user_action(info, "CONVERT_LEAD_TO_STUDENT", f"Convertido prospecto {lead.nombre} (ID: {lead.id}) a estudiante {student.name} (ID: {student.id})")
             return ConvertLeadToStudent(success=True, student=student)
         except Lead.DoesNotExist:
             return ConvertLeadToStudent(success=False, student=None)
@@ -677,6 +795,12 @@ class RegisterPayment(graphene.Mutation):
         if plan_id:
             plan = Plan.objects.get(pk=plan_id)
             pack = StudentPack.objects.create(student=student, plan=plan)
+            # Call purchase notifications
+            try:
+                from .whatsapp import WhatsAppService
+                WhatsAppService.send_purchase_notifications(student, plan, amount)
+            except Exception as notif_err:
+                print(f"Error triggering manual purchase notifications: {notif_err}")
 
         payment = Payment.objects.create(
             student=student,
@@ -685,7 +809,9 @@ class RegisterPayment(graphene.Mutation):
             description=description,
             pack=pack
         )
+        log_user_action(info, "REGISTER_PAYMENT", f"Registrado pago de ${int(amount)} CLP para estudiante {student.name} (ID: {student.id})")
         return RegisterPayment(success=True, payment=payment, pack=pack)
+
 
 class CreateStudentPack(graphene.Mutation):
     class Arguments:
@@ -704,6 +830,13 @@ class CreateStudentPack(graphene.Mutation):
             plan=plan,
             purchase_date=purchase_date if purchase_date else timezone.now()
         )
+        # Call purchase notifications
+        try:
+            from .whatsapp import WhatsAppService
+            WhatsAppService.send_purchase_notifications(student, plan, plan.price)
+        except Exception as notif_err:
+            print(f"Error triggering pack creation notifications: {notif_err}")
+        log_user_action(info, "CREATE_STUDENT_PACK", f"Asociado pack de clases: {plan.name} para estudiante {student.name} (ID: {student.id})")
         return CreateStudentPack(pack=pack)
 
 class ManualDeductClass(graphene.Mutation):
@@ -845,19 +978,27 @@ class CreateAcademyTask(graphene.Mutation):
         title = graphene.String(required=True)
         description = graphene.String()
         assigned_to = graphene.String()
+        assigned_user_id = graphene.Int()
         priority = graphene.String()
+        due_date = graphene.Date()
+        duration = graphene.Int()
         log = graphene.String()
 
     task = graphene.Field(AcademyTaskType)
 
-    def mutate(self, info, title, description="", assigned_to="RECEPCION", priority="RECORDATORIO", log=""):
+    def mutate(self, info, title, description="", assigned_to="RECEPCION", priority="RECORDATORIO", log="", assigned_user_id=None, due_date=None, duration=30):
+        assigned_user = User.objects.filter(pk=assigned_user_id).first() if assigned_user_id else None
         task = AcademyTask.objects.create(
             title=title,
             description=description,
             assigned_to=assigned_to,
+            assigned_user=assigned_user,
             priority=priority,
+            due_date=due_date,
+            duration=duration,
             log=log
         )
+        log_user_action(info, "CREATE_TASK", f"Creada tarea: {task.title} (ID: {task.id})")
         return CreateAcademyTask(task=task)
 
 class UpdateAcademyTask(graphene.Mutation):
@@ -866,13 +1007,16 @@ class UpdateAcademyTask(graphene.Mutation):
         title = graphene.String()
         description = graphene.String()
         assigned_to = graphene.String()
+        assigned_user_id = graphene.Int()
         priority = graphene.String()
         log = graphene.String()
         is_completed = graphene.Boolean()
+        due_date = graphene.Date()
+        duration = graphene.Int()
 
     task = graphene.Field(AcademyTaskType)
 
-    def mutate(self, info, id, title=None, description=None, assigned_to=None, priority=None, log=None, is_completed=None):
+    def mutate(self, info, id, title=None, description=None, assigned_to=None, priority=None, log=None, is_completed=None, assigned_user_id=None, due_date=None, duration=None):
         try:
             task = AcademyTask.objects.get(pk=id)
             if title is not None: task.title = title
@@ -880,8 +1024,21 @@ class UpdateAcademyTask(graphene.Mutation):
             if assigned_to is not None: task.assigned_to = assigned_to
             if priority is not None: task.priority = priority
             if log is not None: task.log = log
-            if is_completed is not None: task.is_completed = is_completed
+            if due_date is not None: task.due_date = due_date
+            if duration is not None: task.duration = duration
+            
+            if assigned_user_id is not None:
+                task.assigned_user = User.objects.filter(pk=assigned_user_id).first() if assigned_user_id > 0 else None
+                
+            if is_completed is not None:
+                if is_completed and not task.is_completed:
+                    task.completed_at = timezone.now()
+                elif not is_completed:
+                    task.completed_at = None
+                task.is_completed = is_completed
+                
             task.save()
+            log_user_action(info, "UPDATE_TASK", f"Actualizada tarea: {task.title} (ID: {task.id})")
             return UpdateAcademyTask(task=task)
         except AcademyTask.DoesNotExist:
             return UpdateAcademyTask(task=None)
@@ -893,7 +1050,11 @@ class DeleteAcademyTask(graphene.Mutation):
     success = graphene.Boolean()
 
     def mutate(self, info, id):
-        AcademyTask.objects.filter(pk=id).delete()
+        task = AcademyTask.objects.filter(pk=id).first()
+        if task:
+            title = task.title
+            task.delete()
+            log_user_action(info, "DELETE_TASK", f"Eliminada tarea: {title} (ID: {id})")
         return DeleteAcademyTask(success=True)
 
 class CreateInstrument(graphene.Mutation):
@@ -1347,6 +1508,8 @@ class CreatePaymentPreference(graphene.Mutation):
                 lead.telefono = phone
                 lead.save()
 
+            log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de plan {plan.name} para lead: {name} (Email: {email})")
+
             # 3. Request preference from Mercado Pago
             token = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "TEST-4651592514397603-071517-68bc59d1e7da5ac1c14335ee790d8a44-2375919242")
             headers = {
@@ -1408,6 +1571,133 @@ class CreatePaymentPreference(graphene.Mutation):
             return CreatePaymentPreference(success=False, preference_id=None, init_point=None)
 
 
+class LoginUser(graphene.Mutation):
+    class Arguments:
+        username = graphene.String(required=True)
+        password = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    token = graphene.String()
+    user = graphene.Field(UserType)
+    error = graphene.String()
+
+    def mutate(self, info, username, password):
+        from django.contrib.auth import authenticate
+        import django.core.signing as signing
+        
+        user = authenticate(username=username, password=password)
+        if user is not None:
+            if not user.is_active:
+                return LoginUser(success=False, error="Cuenta inactiva.")
+            
+            # Generate the signed token
+            token = signing.dumps({'user_id': user.id, 'username': user.username})
+            
+            # Temporary context mock to log action under this user
+            info.context.user = user
+            log_user_action(info, "LOGIN", f"Inicio de sesión exitoso para usuario: {username}")
+            
+            return LoginUser(success=True, token=token, user=user)
+        else:
+            # Audit failed login attempt
+            log_user_action(info, "LOGIN_FAILED", f"Intento fallido de inicio de sesión para usuario: {username}")
+            return LoginUser(success=False, error="Usuario o contraseña incorrectos.")
+
+
+class CreateAdminAccount(graphene.Mutation):
+    class Arguments:
+        username = graphene.String(required=True)
+        password = graphene.String(required=True)
+        email = graphene.String()
+        role = graphene.String(required=True) # ADMIN, VENTAS, RECEPCION
+        allowed_sections = graphene.List(graphene.String, required=True)
+
+    success = graphene.Boolean()
+    user = graphene.Field(UserType)
+    error = graphene.String()
+
+    def mutate(self, info, username, password, role, allowed_sections, email=None):
+        current_user = getattr(info.context, 'user', None)
+        if not current_user or not current_user.is_superuser:
+            return CreateAdminAccount(success=False, error="No tienes permisos para realizar esta acción (se requiere Admin Supremo).")
+
+        if User.objects.filter(username=username).exists():
+            return CreateAdminAccount(success=False, error="El nombre de usuario ya está registrado.")
+
+        # Create user and profile
+        user = User.objects.create_user(username=username, email=email or "", password=password, is_staff=True)
+        profile, created = UserProfile.objects.get_or_create(user=user)
+        profile.role = role
+        profile.allowed_sections = allowed_sections
+        profile.save()
+
+        log_user_action(info, "CREATE_ADMIN", f"Creada cuenta administrativa: {username} con rol {role}")
+        return CreateAdminAccount(success=True, user=user)
+
+
+class UpdateAdminAccount(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        password = graphene.String()
+        role = graphene.String()
+        allowed_sections = graphene.List(graphene.String)
+
+    success = graphene.Boolean()
+    user = graphene.Field(UserType)
+    error = graphene.String()
+
+    def mutate(self, info, id, password=None, role=None, allowed_sections=None):
+        current_user = getattr(info.context, 'user', None)
+        if not current_user or not current_user.is_superuser:
+            return UpdateAdminAccount(success=False, error="No tienes permisos para realizar esta acción (se requiere Admin Supremo).")
+
+        try:
+            user = User.objects.get(pk=id)
+            profile, created = UserProfile.objects.get_or_create(user=user)
+            
+            if password:
+                user.set_password(password)
+                user.save()
+            
+            if role:
+                profile.role = role
+            
+            if allowed_sections is not None:
+                profile.allowed_sections = allowed_sections
+                
+            profile.save()
+
+            log_user_action(info, "UPDATE_ADMIN", f"Actualizada cuenta administrativa: {user.username}")
+            return UpdateAdminAccount(success=True, user=user)
+        except User.DoesNotExist:
+            return UpdateAdminAccount(success=False, error="Usuario no encontrado.")
+
+
+class DeleteAdminAccount(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        current_user = getattr(info.context, 'user', None)
+        if not current_user or not current_user.is_superuser:
+            return DeleteAdminAccount(success=False, error="No tienes permisos para realizar esta acción (se requiere Admin Supremo).")
+
+        if current_user.id == id:
+            return DeleteAdminAccount(success=False, error="No puedes eliminar tu propia cuenta.")
+
+        try:
+            user = User.objects.get(pk=id)
+            username = user.username
+            user.delete()
+            log_user_action(info, "DELETE_ADMIN", f"Eliminada cuenta administrativa: {username}")
+            return DeleteAdminAccount(success=True)
+        except User.DoesNotExist:
+            return DeleteAdminAccount(success=False, error="Usuario no encontrado.")
+
+
 class Mutation(graphene.ObjectType):
     create_lesson = CreateLesson.Field()
     create_student = CreateStudent.Field()
@@ -1451,6 +1741,10 @@ class Mutation(graphene.ObjectType):
     update_student = UpdateStudent.Field()
     update_global_settings = UpdateGlobalSettings.Field()
     create_payment_preference = CreatePaymentPreference.Field()
+    login_user = LoginUser.Field()
+    create_admin_account = CreateAdminAccount.Field()
+    update_admin_account = UpdateAdminAccount.Field()
+    delete_admin_account = DeleteAdminAccount.Field()
 
 
 import channels_graphql_ws
