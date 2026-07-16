@@ -1308,9 +1308,23 @@ class CreatePaymentPreference(graphene.Mutation):
     def mutate(self, info, plan_id, name, email, phone, back_url):
         import os
         import requests
+        from urllib.parse import urlparse
         try:
             # 1. Fetch the plan
             plan = Plan.objects.get(pk=plan_id)
+            
+            # Clean and sanitize back_url
+            back_url = back_url.strip().rstrip('/')
+            if not back_url or not (back_url.startswith("http://") or back_url.startswith("https://")):
+                # Fallback to referer or default host
+                referer = info.context.META.get('HTTP_REFERER')
+                if referer:
+                    parsed = urlparse(referer)
+                    back_url = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
+                else:
+                    back_url = "https://www.detache.cl"
+            
+            print(f"DEBUG: CreatePaymentPreference clean back_url is '{back_url}'")
             
             # 2. Create or update the Lead to track payment initiation
             lead = Lead.objects.filter(email=email).first()
