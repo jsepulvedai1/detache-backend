@@ -1608,6 +1608,10 @@ class CreatePaymentPreference(graphene.Mutation):
                 "external_reference": f"lead_id:{lead.id}|plan_id:{plan.id}"
             }
             
+            notification_url = info.context.build_absolute_uri('/api/mercadopago/webhook/')
+            if "localhost" not in notification_url and "127.0.0.1" not in notification_url:
+                preference_data["notification_url"] = notification_url
+            
             response = requests.post(
                 "https://api.mercadopago.com/checkout/preferences",
                 headers=headers,
