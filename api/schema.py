@@ -65,7 +65,7 @@ class ChatMessageType(DjangoObjectType):
 class TeacherType(DjangoObjectType):
     class Meta:
         model = Teacher
-        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number", "rut", "address", "email")
+        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number", "rut", "address", "email", "user")
 
     def resolve_photo(self, info):
         if self.photo:
@@ -85,7 +85,7 @@ class AvailabilityType(DjangoObjectType):
 class StudentType(DjangoObjectType):
     class Meta:
         model = Student
-        fields = ("id", "name", "photo", "status", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "private_notes", "wall_messages", "packs")
+        fields = ("id", "name", "email", "photo", "status", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "private_notes", "wall_messages", "packs", "user")
 
     def resolve_photo(self, info):
         if self.photo:
@@ -225,6 +225,11 @@ class Query(graphene.ObjectType):
     all_audit_logs = graphene.List(AuditLogType)
     me = graphene.Field(UserType)
     chat_messages = graphene.List(ChatMessageType, phone=graphene.String(required=True))
+    my_student_profile = graphene.Field(StudentType)
+    my_teacher_profile = graphene.Field(TeacherType)
+    my_lessons = graphene.List(LessonType, start_date=graphene.String(), end_date=graphene.String())
+    my_wall_messages = graphene.List(StudentWallMessageType)
+    my_packs = graphene.List(StudentPackType)
 
     # Teachers
     all_teachers = graphene.List(TeacherType)
@@ -372,6 +377,67 @@ class Query(graphene.ObjectType):
             raise Exception("No autorizado.")
         clean_num = phone[-8:] if len(phone) >= 8 else phone
         return ChatMessage.objects.filter(phone_number__icontains=clean_num).order_by('timestamp')
+
+    def resolve_my_student_profile(self, info):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            raise Exception("No autenticado.")
+        try:
+            return user.student_profile
+        except:
+            raise Exception("No tienes un perfil de alumno vinculado.")
+
+    def resolve_my_teacher_profile(self, info):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            raise Exception("No autenticado.")
+        try:
+            return user.teacher_profile
+        except:
+            raise Exception("No tienes un perfil de profesor vinculado.")
+
+    def resolve_my_lessons(self, info, start_date=None, end_date=None):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            raise Exception("No autenticado.")
+        qs = Lesson.objects.all()
+        if hasattr(user, 'student_profile'):
+            try:
+                qs = qs.filter(student=user.student_profile)
+            except:
+                return []
+        elif hasattr(user, 'teacher_profile'):
+            try:
+                qs = qs.filter(teacher=user.teacher_profile)
+            except:
+                return []
+        else:
+            return []
+        if start_date:
+            qs = qs.filter(date__gte=start_date)
+        if end_date:
+            qs = qs.filter(date__lte=end_date)
+        return qs.order_by('date', 'start_time')
+
+    def resolve_my_wall_messages(self, info):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            raise Exception("No autenticado.")
+        try:
+            student = user.student_profile
+            return StudentWallMessage.objects.filter(student=student).order_by('-created_at')
+        except:
+            raise Exception("No tienes un perfil de alumno vinculado.")
+
+    def resolve_my_packs(self, info):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            raise Exception("No autenticado.")
+        try:
+            student = user.student_profile
+            return StudentPack.objects.filter(student=student).order_by('-purchase_date')
+        except:
+            raise Exception("No tienes un perfil de alumno vinculado.")
 
 # --- Mutations ---
 
@@ -1579,6 +1645,7 @@ class LoginUser(graphene.Mutation):
     success = graphene.Boolean()
     token = graphene.String()
     user = graphene.Field(UserType)
+    portal_type = graphene.String()
     error = graphene.String()
 
     def mutate(self, info, username, password):
@@ -1593,11 +1660,28 @@ class LoginUser(graphene.Mutation):
             # Generate the signed token
             token = signing.dumps({'user_id': user.id, 'username': user.username})
             
+            # Detect portal type
+            portal_type = 'ADMIN'
+            if hasattr(user, 'student_profile'):
+                try:
+                    user.student_profile
+                    portal_type = 'STUDENT'
+                except:
+                    pass
+            if hasattr(user, 'teacher_profile'):
+                try:
+                    user.teacher_profile
+                    portal_type = 'TEACHER'
+                except:
+                    pass
+            if user.is_staff or user.is_superuser:
+                portal_type = 'ADMIN'
+            
             # Temporary context mock to log action under this user
             info.context.user = user
-            log_user_action(info, "LOGIN", f"Inicio de sesión exitoso para usuario: {username}")
+            log_user_action(info, "LOGIN", f"Inicio de sesión exitoso para usuario: {username} ({portal_type})")
             
-            return LoginUser(success=True, token=token, user=user)
+            return LoginUser(success=True, token=token, user=user, portal_type=portal_type)
         else:
             # Audit failed login attempt
             log_user_action(info, "LOGIN_FAILED", f"Intento fallido de inicio de sesión para usuario: {username}")
@@ -1698,6 +1782,106 @@ class DeleteAdminAccount(graphene.Mutation):
             return DeleteAdminAccount(success=False, error="Usuario no encontrado.")
 
 
+class CreateStudentAccount(graphene.Mutation):
+    class Arguments:
+        student_id = graphene.Int(required=True)
+        password = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, student_id, password):
+        current_user = getattr(info.context, 'user', None)
+        if not current_user or not current_user.is_superuser:
+            return CreateStudentAccount(success=False, error="No autorizado (requiere Admin Supremo).")
+        try:
+            student = Student.objects.get(pk=student_id)
+        except Student.DoesNotExist:
+            return CreateStudentAccount(success=False, error="Alumno no encontrado.")
+        if student.user:
+            return CreateStudentAccount(success=False, error="Este alumno ya tiene una cuenta de portal.")
+        username = student.rut or student.email or f"alumno_{student.id}"
+        username = username.strip().lower().replace(' ', '_')
+        if User.objects.filter(username=username).exists():
+            return CreateStudentAccount(success=False, error=f"El username '{username}' ya existe. Verifica el RUT o correo del alumno.")
+        user = User.objects.create_user(username=username, password=password, email=student.email or '')
+        student.user = user
+        student.save()
+        log_user_action(info, "CREATE_STUDENT_ACCOUNT", f"Cuenta de portal creada para alumno: {student.name} (username: {username})")
+        return CreateStudentAccount(success=True)
+
+
+class CreateTeacherAccount(graphene.Mutation):
+    class Arguments:
+        teacher_id = graphene.Int(required=True)
+        password = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, teacher_id, password):
+        current_user = getattr(info.context, 'user', None)
+        if not current_user or not current_user.is_superuser:
+            return CreateTeacherAccount(success=False, error="No autorizado (requiere Admin Supremo).")
+        try:
+            teacher = Teacher.objects.get(pk=teacher_id)
+        except Teacher.DoesNotExist:
+            return CreateTeacherAccount(success=False, error="Profesor no encontrado.")
+        if teacher.user:
+            return CreateTeacherAccount(success=False, error="Este profesor ya tiene una cuenta de portal.")
+        username = teacher.rut or teacher.email or f"profesor_{teacher.id}"
+        username = username.strip().lower().replace(' ', '_')
+        if User.objects.filter(username=username).exists():
+            return CreateTeacherAccount(success=False, error=f"El username '{username}' ya existe. Verifica el RUT o correo del profesor.")
+        user = User.objects.create_user(username=username, password=password, email=teacher.email or '')
+        teacher.user = user
+        teacher.save()
+        log_user_action(info, "CREATE_TEACHER_ACCOUNT", f"Cuenta de portal creada para profesor: {teacher.name} (username: {username})")
+        return CreateTeacherAccount(success=True)
+
+
+class ResetPortalPassword(graphene.Mutation):
+    class Arguments:
+        user_id = graphene.Int(required=True)
+        new_password = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, user_id, new_password):
+        current_user = getattr(info.context, 'user', None)
+        if not current_user or not current_user.is_superuser:
+            return ResetPortalPassword(success=False, error="No autorizado (requiere Admin Supremo).")
+        try:
+            target_user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return ResetPortalPassword(success=False, error="Usuario no encontrado.")
+        target_user.set_password(new_password)
+        target_user.save()
+        log_user_action(info, "RESET_PORTAL_PASSWORD", f"Contraseña reseteada para usuario: {target_user.username}")
+        return ResetPortalPassword(success=True)
+
+
+class ChangeMyPassword(graphene.Mutation):
+    class Arguments:
+        current_password = graphene.String(required=True)
+        new_password = graphene.String(required=True)
+
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, current_password, new_password):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            return ChangeMyPassword(success=False, error="No autenticado.")
+        if not user.check_password(current_password):
+            return ChangeMyPassword(success=False, error="La contraseña actual es incorrecta.")
+        user.set_password(new_password)
+        user.save()
+        log_user_action(info, "CHANGE_PASSWORD", f"El usuario {user.username} cambió su contraseña.")
+        return ChangeMyPassword(success=True)
+
+
 class Mutation(graphene.ObjectType):
     create_lesson = CreateLesson.Field()
     create_student = CreateStudent.Field()
@@ -1745,6 +1929,10 @@ class Mutation(graphene.ObjectType):
     create_admin_account = CreateAdminAccount.Field()
     update_admin_account = UpdateAdminAccount.Field()
     delete_admin_account = DeleteAdminAccount.Field()
+    create_student_account = CreateStudentAccount.Field()
+    create_teacher_account = CreateTeacherAccount.Field()
+    reset_portal_password = ResetPortalPassword.Field()
+    change_my_password = ChangeMyPassword.Field()
 
 
 import channels_graphql_ws

@@ -192,6 +192,7 @@ class Teacher(models.Model):
     rut = models.CharField(max_length=20, blank=True, null=True)
     address = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
+    user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='teacher_profile')
 
     def __str__(self):
         return self.name
@@ -244,6 +245,7 @@ class Student(models.Model):
     start_date = models.DateField(default=timezone.now)
     # The instrument they are currently studying
     primary_instrument = models.ForeignKey('Instrument', related_name='students', on_delete=models.SET_NULL, null=True, blank=True)
+    user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='student_profile')
 
     def __str__(self):
         return self.name
