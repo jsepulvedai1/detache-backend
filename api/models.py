@@ -289,7 +289,7 @@ class Lesson(models.Model):
         ('THEORY', 'Theory'),
         ('ENSEMBLE', 'Ensemble'),
     ]
-    teacher = models.ForeignKey(Teacher, related_name='lessons', on_delete=models.CASCADE)
+    teacher = models.ForeignKey(Teacher, related_name='lessons', on_delete=models.SET_NULL, null=True, blank=True)
     student = models.ForeignKey(Student, related_name='lessons', on_delete=models.CASCADE, null=True, blank=True)
     lead = models.ForeignKey(Lead, related_name='lessons', on_delete=models.SET_NULL, null=True, blank=True)
     room = models.ForeignKey(Room, related_name='lessons', on_delete=models.SET_NULL, null=True, blank=True)
@@ -398,7 +398,7 @@ class Material(models.Model):
     title = models.CharField(max_length=255)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='PDF')
     url = models.URLField(max_length=500)
-    teacher = models.ForeignKey(Teacher, related_name='materials', on_delete=models.CASCADE, null=True, blank=True)
+    teacher = models.ForeignKey(Teacher, related_name='materials', on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

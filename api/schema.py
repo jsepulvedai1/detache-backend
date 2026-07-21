@@ -526,6 +526,28 @@ class UpdateTeacher(graphene.Mutation):
         except Teacher.DoesNotExist:
             return UpdateTeacher(teacher=None)
 
+class DeleteTeacher(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        try:
+            teacher = Teacher.objects.get(pk=id)
+            if teacher.user:
+                u = teacher.user
+                teacher.user = None
+                teacher.save()
+                u.delete()
+            teacher.delete()
+            return DeleteTeacher(success=True)
+        except Teacher.DoesNotExist:
+            return DeleteTeacher(success=False, error="Profesor no encontrado.")
+        except Exception as e:
+            return DeleteTeacher(success=False, error=str(e))
+
 class CreateAvailability(graphene.Mutation):
     class Arguments:
         teacher_id = graphene.Int(required=True)
@@ -1903,6 +1925,7 @@ class Mutation(graphene.ObjectType):
     update_plan = UpdatePlan.Field()
     delete_plan = DeletePlan.Field()
     update_teacher = UpdateTeacher.Field()
+    delete_teacher = DeleteTeacher.Field()
     create_class_type = CreateClassType.Field()
     update_class_type = UpdateClassType.Field()
     delete_class_type = DeleteClassType.Field()
