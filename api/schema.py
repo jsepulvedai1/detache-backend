@@ -1,7 +1,7 @@
 import graphene
 from django.utils import timezone
 from graphene_django import DjangoObjectType
-from .models import Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings, UserProfile, AuditLog, ChatMessage
+from .models import Announcement, Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings, UserProfile, AuditLog, ChatMessage
 from django.contrib.auth.models import User
 
 def log_user_action(info, action, details):
@@ -61,6 +61,12 @@ class ChatMessageType(DjangoObjectType):
     class Meta:
         model = ChatMessage
         fields = ("id", "lead", "student", "phone_number", "sender", "message_text", "message_id", "timestamp")
+
+
+class AnnouncementType(DjangoObjectType):
+    class Meta:
+        model = Announcement
+        fields = '__all__'
 
 class TeacherType(DjangoObjectType):
     class Meta:
@@ -232,6 +238,10 @@ class Query(graphene.ObjectType):
     my_packs = graphene.List(StudentPackType)
 
     # Teachers
+
+    all_announcements = graphene.List(AnnouncementType)
+    active_announcements = graphene.List(AnnouncementType, target_audience=graphene.String())
+
     all_teachers = graphene.List(TeacherType)
     teacher_by_id = graphene.Field(TeacherType, id=graphene.Int(required=True))
     
@@ -277,6 +287,16 @@ class Query(graphene.ObjectType):
 
     def resolve_hello(self, info):
         return "Hello, this is the Detache backend with GraphQL!"
+
+
+    def resolve_all_announcements(self, info):
+        return Announcement.objects.all()
+
+    def resolve_active_announcements(self, info, target_audience=None):
+        qs = Announcement.objects.filter(is_active=True)
+        if target_audience:
+            qs = qs.filter(target_audience__in=['ALL', target_audience])
+        return qs
 
     def resolve_all_teachers(self, info):
         return Teacher.objects.all()
@@ -441,6 +461,82 @@ class Query(graphene.ObjectType):
 
 # --- Mutations ---
 
+class CreatePreReservation(graphene.Mutation):
+    class Arguments:
+        nombre = graphene.String(required=True)
+        telefono = graphene.String(required=True)
+        email = graphene.String()
+        servicio = graphene.String()
+        profesor_nombre = graphene.String(required=True)
+        fecha = graphene.Date(required=True)
+        hora = graphene.Time(required=True)
+        sala = graphene.String()
+        modalidad = graphene.String()
+        notas = graphene.String()
+
+    success = graphene.Boolean()
+    lesson = graphene.Field(LessonType)
+
+    def mutate(self, info, nombre, telefono, profesor_nombre, fecha, hora, email=None, servicio='CLASE_PRUEBA', sala=None, modalidad='PRESENCIAL', notas=None):
+        lead = Lead.objects.create(
+            nombre=nombre,
+            telefono=telefono,
+            email=email,
+            servicio=servicio or 'CLASE_PRUEBA',
+            fuente='WEB',
+            estado='PRE_RESERVA'
+        )
+        if notas:
+            LeadNote.objects.create(lead=lead, texto=notas, autor='Reserva Web')
+
+        teacher = Teacher.objects.filter(name__icontains=profesor_nombre).first()
+        if not teacher:
+            teacher = Teacher.objects.first()
+        from datetime import datetime, timedelta, date, time
+        if isinstance(hora, str):
+            parts = [int(p) for p in hora.split(':')]
+            hora = time(parts[0], parts[1])
+        if isinstance(fecha, str):
+            fecha = datetime.strptime(fecha, "%Y-%m-%d").date()
+
+        end_time = (datetime.combine(datetime.today(), hora) + timedelta(minutes=45)).time()
+        lesson = Lesson.objects.create(
+            teacher=teacher,
+            lead=lead,
+            date=fecha,
+            start_time=hora,
+            end_time=end_time,
+            status='PENDING',
+            is_pre_reservation=True,
+            lesson_type='INDIVIDUAL'
+        )
+
+        # Send confirmation email if email provided
+        if email:
+            try:
+                from django.core.mail import send_mail
+                from .models import GlobalSettings
+                settings = GlobalSettings.get_singleton()
+                template = settings.trial_class_email_template
+                if template:
+                    body = template.format(
+                        nombre=nombre,
+                        profesor=teacher.name if teacher else profesor_nombre,
+                        fecha=fecha.strftime("%d/%m/%Y"),
+                        hora=hora.strftime("%H:%M")
+                    )
+                    send_mail(
+                        subject="Pre-reserva Clase de Prueba - Academia Détaché",
+                        message=body,
+                        from_email=settings.email_contact or "academia@detache.cl",
+                        recipient_list=[email],
+                        fail_silently=True
+                    )
+            except Exception as mail_err:
+                print(f"Error sending trial class email: {mail_err}")
+
+        return CreatePreReservation(success=True, lesson=lesson)
+
 class CreateLesson(graphene.Mutation):
     class Arguments:
         teacher_id = graphene.Int(required=True)
@@ -468,6 +564,58 @@ class CreateLesson(graphene.Mutation):
             lesson_type=lesson_type
         )
         return CreateLesson(lesson=lesson)
+
+class CreateAnnouncement(graphene.Mutation):
+    class Arguments:
+        title = graphene.String(required=True)
+        content = graphene.String(required=True)
+        target_audience = graphene.String()
+        is_active = graphene.Boolean()
+
+    announcement = graphene.Field(AnnouncementType)
+
+    def mutate(self, info, title, content, target_audience='ALL', is_active=True):
+        announcement = Announcement.objects.create(
+            title=title,
+            content=content,
+            target_audience=target_audience,
+            is_active=is_active
+        )
+        return CreateAnnouncement(announcement=announcement)
+
+class UpdateAnnouncement(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        title = graphene.String()
+        content = graphene.String()
+        target_audience = graphene.String()
+        is_active = graphene.Boolean()
+
+    announcement = graphene.Field(AnnouncementType)
+
+    def mutate(self, info, id, title=None, content=None, target_audience=None, is_active=None):
+        try:
+            announcement = Announcement.objects.get(pk=id)
+            if title is not None: announcement.title = title
+            if content is not None: announcement.content = content
+            if target_audience is not None: announcement.target_audience = target_audience
+            if is_active is not None: announcement.is_active = is_active
+            announcement.save()
+            return UpdateAnnouncement(announcement=announcement)
+        except Announcement.DoesNotExist:
+            return UpdateAnnouncement(announcement=None)
+
+class DeleteAnnouncement(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        try:
+            Announcement.objects.get(pk=id).delete()
+            return DeleteAnnouncement(success=True)
+        except Announcement.DoesNotExist:
+            return DeleteAnnouncement(success=False)
 
 class CreateTeacher(graphene.Mutation):
     class Arguments:
@@ -960,8 +1108,9 @@ class UpdateLessonStatus(graphene.Mutation):
             lesson.status = status
             lesson.save()
 
-            # Auto-deduct class if status changed to COMPLETED
-            if old_status != 'COMPLETED' and status == 'COMPLETED':
+            # Auto-deduct class if status changed to COMPLETED or ABSENT
+            deducting_statuses = ['COMPLETED', 'ABSENT']
+            if old_status not in deducting_statuses and status in deducting_statuses:
                 active_pack = StudentPack.objects.filter(
                     student=lesson.student,
                     is_active=True,
@@ -969,6 +1118,16 @@ class UpdateLessonStatus(graphene.Mutation):
                 ).order_by('expiration_date').first()
                 if active_pack:
                     active_pack.remaining_classes -= 1
+                    active_pack.save()
+            
+            # Auto-refund class if changed from COMPLETED/ABSENT to something else
+            elif old_status in deducting_statuses and status not in deducting_statuses:
+                active_pack = StudentPack.objects.filter(
+                    student=lesson.student,
+                    is_active=True
+                ).order_by('-expiration_date').first()
+                if active_pack:
+                    active_pack.remaining_classes += 1
                     active_pack.save()
                     
             return UpdateLessonStatus(success=True, lesson=lesson)
@@ -1562,7 +1721,7 @@ class CreatePaymentPreference(graphene.Mutation):
             # 1. Fetch the plan
             plan = Plan.objects.get(pk=plan_id)
             
-            # Clean and sanitize back_url
+            # Clean and sanitize back_url to base origin
             back_url = back_url.strip().rstrip('/')
             if not back_url or not (back_url.startswith("http://") or back_url.startswith("https://")):
                 # Fallback to referer or default host
@@ -1572,6 +1731,9 @@ class CreatePaymentPreference(graphene.Mutation):
                     back_url = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
                 else:
                     back_url = "https://www.detache.cl"
+            else:
+                parsed = urlparse(back_url)
+                back_url = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
             
             print(f"DEBUG: CreatePaymentPreference clean back_url is '{back_url}'")
             
@@ -1806,6 +1968,8 @@ class DeleteAdminAccount(graphene.Mutation):
             return DeleteAdminAccount(success=True)
         except User.DoesNotExist:
             return DeleteAdminAccount(success=False, error="Usuario no encontrado.")
+        except Exception as e:
+            return DeleteAdminAccount(success=False, error=f"Error al eliminar usuario: {str(e)}")
 
 
 class CreateStudentAccount(graphene.Mutation):
@@ -1909,6 +2073,10 @@ class ChangeMyPassword(graphene.Mutation):
 
 
 class Mutation(graphene.ObjectType):
+    create_announcement = CreateAnnouncement.Field()
+    update_announcement = UpdateAnnouncement.Field()
+    delete_announcement = DeleteAnnouncement.Field()
+    create_pre_reservation = CreatePreReservation.Field()
     create_lesson = CreateLesson.Field()
     create_student = CreateStudent.Field()
     create_teacher = CreateTeacher.Field()

@@ -282,6 +282,8 @@ class Lesson(models.Model):
         ('PENDING', 'Pending'),
         ('COMPLETED', 'Completed'),
         ('CANCELLED', 'Cancelled'),
+        ('ABSENT', 'Absent'),
+        ('EXCUSED', 'Excused'),
     ]
     TYPE_CHOICES = [
         ('INDIVIDUAL', 'Individual'),
@@ -590,3 +592,22 @@ class ChatMessage(models.Model):
 
 
 
+
+
+class Announcement(models.Model):
+    TARGET_CHOICES = [
+        ('ALL', 'Todos'),
+        ('STUDENTS', 'Solo Alumnos'),
+        ('TEACHERS', 'Solo Profesores'),
+    ]
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    target_audience = models.CharField(max_length=20, choices=TARGET_CHOICES, default='ALL')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
