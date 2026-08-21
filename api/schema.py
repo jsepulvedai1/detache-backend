@@ -1336,6 +1336,28 @@ class CreateLeadNote(graphene.Mutation):
         except Lead.DoesNotExist:
             return CreateLeadNote(success=False, lead_note=None, lead=None)
 
+class DeleteLead(graphene.Mutation):
+    class Arguments:
+        id = graphene.ID(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        try:
+            lead = Lead.objects.get(pk=id)
+            lead_name = lead.nombre
+            # Clean up associated pre-reservation lessons if any
+            Lesson.objects.filter(lead=lead, is_pre_reservation=True, student__isnull=True).delete()
+            lead.delete()
+            try:
+                OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": int(id), "event_type": "deleted"})
+            except Exception as ws_err:
+                print(f"Error broadcasting lead deletion: {ws_err}")
+            log_user_action(info, "DELETE_LEAD", f"Eliminado prospecto: {lead_name} (ID: {id})")
+            return DeleteLead(success=True)
+        except Lead.DoesNotExist:
+            return DeleteLead(success=False)
+
 class CreatePlan(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
@@ -2318,6 +2340,7 @@ class Mutation(graphene.ObjectType):
     update_lesson_status = UpdateLessonStatus.Field()
     update_lead_status = UpdateLeadStatus.Field()
     create_lead_note = CreateLeadNote.Field()
+    delete_lead = DeleteLead.Field()
     update_plan = UpdatePlan.Field()
     delete_plan = DeletePlan.Field()
     update_teacher = UpdateTeacher.Field()
