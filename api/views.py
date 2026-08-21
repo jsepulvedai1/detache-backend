@@ -295,8 +295,11 @@ class MercadoPagoWebhookView(View):
                                 clean_phone = lead.telefono[-8:]
                                 student = Student.objects.filter(phone_number__icontains=clean_phone).first()
                             
+                            if not student and lead.email:
+                                student = Student.objects.filter(email__iexact=lead.email.strip()).first()
+
                             if not student:
-                                student = Student.objects.filter(name__iexact=lead.nombre).first()
+                                student = Student.objects.filter(name__iexact=lead.nombre.strip()).first()
                             
                             if not student:
                                 student = Student.objects.create(
@@ -306,6 +309,11 @@ class MercadoPagoWebhookView(View):
                                     status='ACTIVE'
                                 )
                                 print(f"Webhook created new student {student.name} for lead {lead.id}")
+                            else:
+                                if student.status != 'ACTIVE':
+                                    student.status = 'ACTIVE'
+                                    student.save()
+                                print(f"Webhook matched existing student {student.name} (ID: {student.id})")
                             
                             # Convert any lessons
                             lessons_updated = Lesson.objects.filter(lead=lead).update(student=student, is_pre_reservation=False)
