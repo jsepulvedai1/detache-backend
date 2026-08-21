@@ -129,6 +129,9 @@ class RoomType(DjangoObjectType):
         fields = ("id", "name", "capacity", "status", "instruments")
 
 class LessonType(DjangoObjectType):
+    status = graphene.String()
+    lesson_type = graphene.String()
+
     class Meta:
         model = Lesson
         fields = ("id", "teacher", "student", "lead", "room", "date", "start_time", "end_time", "status", "lesson_type", "is_pre_reservation")

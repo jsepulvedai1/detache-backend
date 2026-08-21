@@ -277,6 +277,7 @@ class Room(models.Model):
 class Lesson(models.Model):
     STATUS_CHOICES = [
         ('PENDING', 'Pending'),
+        ('CONFIRMED', 'Confirmed'),
         ('COMPLETED', 'Completed'),
         ('CANCELLED', 'Cancelled'),
         ('ABSENT', 'Absent'),
