@@ -224,6 +224,7 @@ class Student(models.Model):
     STATUS_CHOICES = [
         ('ACTIVE', 'Active'),
         ('INACTIVE', 'Inactive'),
+        ('ON_HOLD', 'On Hold'),
     ]
     LEVEL_CHOICES = [
         ('BEGINNER', 'Beginner'),
@@ -238,7 +239,7 @@ class Student(models.Model):
     guardian_phone = models.CharField(max_length=20, blank=True, null=True)
     
     photo = models.ImageField(upload_to='students/', blank=True, null=True)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='ACTIVE')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     
     level = models.CharField(max_length=50, choices=LEVEL_CHOICES, default='BEGINNER')

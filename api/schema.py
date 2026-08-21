@@ -89,9 +89,14 @@ class AvailabilityType(DjangoObjectType):
         fields = ("id", "day", "start_time", "end_time", "teacher")
 
 class StudentType(DjangoObjectType):
+    status = graphene.String()
+
     class Meta:
         model = Student
         fields = ("id", "name", "email", "photo", "status", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "assigned_teachers", "private_notes", "wall_messages", "packs", "user")
+
+    def resolve_status(self, info):
+        return str(self.status) if self.status else "ACTIVE"
 
     def resolve_photo(self, info):
         if self.photo:
@@ -1294,6 +1299,42 @@ class UpdateLeadStatus(graphene.Mutation):
         except Lead.DoesNotExist:
             return UpdateLeadStatus(success=False, lead=None)
 
+class CreateLeadNote(graphene.Mutation):
+    class Arguments:
+        lead_id = graphene.Int(required=True)
+        texto = graphene.String(required=True)
+        autor = graphene.String()
+
+    success = graphene.Boolean()
+    lead_note = graphene.Field(LeadNoteType)
+    lead = graphene.Field(LeadType)
+
+    def mutate(self, info, lead_id, texto, autor="Admin"):
+        try:
+            lead = Lead.objects.get(pk=lead_id)
+            user = getattr(info.context, 'user', None)
+            resolved_author = autor
+            if user and user.is_authenticated:
+                if user.first_name:
+                    resolved_author = f"{user.first_name} {user.last_name}".strip()
+                elif user.username:
+                    resolved_author = user.username
+
+            note = LeadNote.objects.create(
+                lead=lead,
+                texto=texto,
+                autor=resolved_author or "Admin"
+            )
+            lead.fecha_ultimo_contacto = timezone.now()
+            lead.save()
+            try:
+                OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+            except Exception as ws_err:
+                print(f"Error broadcasting lead note update: {ws_err}")
+            log_user_action(info, "CREATE_LEAD_NOTE", f"Agregada nota a lead {lead.nombre}: {texto[:30]}...")
+            return CreateLeadNote(success=True, lead_note=note, lead=lead)
+        except Lead.DoesNotExist:
+            return CreateLeadNote(success=False, lead_note=None, lead=None)
 
 class CreatePlan(graphene.Mutation):
     class Arguments:
@@ -2276,6 +2317,7 @@ class Mutation(graphene.ObjectType):
     register_payment = RegisterPayment.Field()
     update_lesson_status = UpdateLessonStatus.Field()
     update_lead_status = UpdateLeadStatus.Field()
+    create_lead_note = CreateLeadNote.Field()
     update_plan = UpdatePlan.Field()
     delete_plan = DeletePlan.Field()
     update_teacher = UpdateTeacher.Field()
