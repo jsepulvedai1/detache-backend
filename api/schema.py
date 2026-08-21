@@ -218,7 +218,10 @@ class GlobalSettingsType(DjangoObjectType):
         fields = (
             "id", "phone_number", "email_contact", "address",
             "opening_hours_weekdays", "opening_hours_saturdays",
-            "facebook_url", "instagram_url", "trial_class_email_template"
+            "facebook_url", "instagram_url", "trial_class_email_template",
+            "whatsapp_number", "whatsapp_assigned_to", "evolution_api_url",
+            "evolution_api_key", "evolution_instance_name", "whatsapp_auto_reply",
+            "whatsapp_welcome_template"
         )
 
 # --- Queries ---
