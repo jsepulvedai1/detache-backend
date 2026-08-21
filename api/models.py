@@ -409,6 +409,10 @@ class AcademyTask(models.Model):
 # ─── ACADEMY RESOURCES & STUDENT PORTAL ───
 
 class Material(models.Model):
+    SCOPE_CHOICES = [
+        ('DETACHE', 'Détaché Oficial'),
+        ('TEACHER', 'Profesor'),
+    ]
     TYPE_CHOICES = [
         ('PDF', 'PDF / Documento'),
         ('VIDEO', 'Video YouTube'),
@@ -416,13 +420,17 @@ class Material(models.Model):
         ('LINK', 'Enlace Web'),
     ]
     title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='PDF')
-    url = models.URLField(max_length=500)
+    url = models.URLField(max_length=500, blank=True, default='')
+    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default='DETACHE')
     teacher = models.ForeignKey(Teacher, related_name='materials', on_delete=models.SET_NULL, null=True, blank=True)
+    instrument = models.ForeignKey(Instrument, related_name='materials', on_delete=models.SET_NULL, null=True, blank=True)
+    level = models.CharField(max_length=50, blank=True, default='') # Principiante, Intermedio, Avanzado
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"[{self.type}] {self.title}"
+        return f"[{self.scope} - {self.type}] {self.title}"
 
 class StudentPrivateNote(models.Model):
     student = models.ForeignKey(Student, related_name='private_notes', on_delete=models.CASCADE)

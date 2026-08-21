@@ -62,9 +62,10 @@ class WhatsAppWebhookView(View):
                             text_content = ""
 
                     if text_content:
-                        # Find or create corresponding lead/student using last 8 digits
                         clean_num = phone_number[-8:] if len(phone_number) >= 8 else phone_number
                         student = Student.objects.filter(phone_number__icontains=clean_num).first()
+                        if not student:
+                            student = Student.objects.filter(guardian_phone__icontains=clean_num).first()
                         lead = Lead.objects.filter(telefono__icontains=clean_num).first()
                         
                         if not student and not lead:
@@ -199,23 +200,30 @@ class MediaUploadView(View):
         try:
             upload_file = request.FILES.get('file')
             if not upload_file:
-                return JsonResponse({"status": "ERROR", "message": "Missing file"}, status=400)
+                return JsonResponse({"status": "ERROR", "message": "No se recibió ningún archivo"}, status=400)
             
             from django.core.files.storage import default_storage
             from django.core.files.base import ContentFile
             import uuid
             import os
 
+            folder = request.POST.get('folder', 'materials')
             ext = os.path.splitext(upload_file.name)[1]
-            filename = f"web_{uuid.uuid4().hex}{ext}"
+            original_base = os.path.splitext(upload_file.name)[0][:30]
+            clean_base = "".join([c if c.isalnum() or c in ('-', '_') else '_' for c in original_base])
+            filename = f"{clean_base}_{uuid.uuid4().hex[:8]}{ext}"
             
-            # Save under media/web/
-            saved_path = default_storage.save(f"web/{filename}", ContentFile(upload_file.read()))
-            url = default_storage.url(saved_path)
+            # Save under media/{folder}/
+            saved_path = default_storage.save(f"{folder}/{filename}", ContentFile(upload_file.read()))
+            relative_url = default_storage.url(saved_path)
+            full_url = request.build_absolute_uri(relative_url)
 
             return JsonResponse({
                 "status": "SUCCESS", 
-                "url": url
+                "url": full_url,
+                "relativeUrl": relative_url,
+                "filename": upload_file.name,
+                "size": upload_file.size
             })
         except Exception as e:
             return JsonResponse({"status": "ERROR", "message": str(e)}, status=500)

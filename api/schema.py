@@ -104,9 +104,12 @@ class StudentType(DjangoObjectType):
         return None
 
 class MaterialType(DjangoObjectType):
+    scope = graphene.String()
+    type = graphene.String()
+
     class Meta:
         model = Material
-        fields = ("id", "title", "type", "url", "teacher", "created_at")
+        fields = ("id", "title", "description", "type", "url", "scope", "teacher", "instrument", "level", "created_at")
 
 class StudentPrivateNoteType(DjangoObjectType):
     class Meta:
@@ -302,7 +305,13 @@ class Query(graphene.ObjectType):
     all_payments = graphene.List(PaymentType)
     all_academy_tasks = graphene.List(AcademyTaskType)
     all_instruments = graphene.List(InstrumentType)
-    all_materials = graphene.List(MaterialType)
+    all_materials = graphene.List(
+        MaterialType,
+        scope=graphene.String(),
+        teacher_id=graphene.Int(),
+        instrument_id=graphene.Int(),
+        search=graphene.String()
+    )
     
     # Landing Pages
     all_landing_pages = graphene.List(LandingPageType)
@@ -380,10 +389,27 @@ class Query(graphene.ObjectType):
         return Payment.objects.all()
 
     def resolve_all_academy_tasks(self, info):
+        user = getattr(info.context, 'user', None)
+        if user and user.is_authenticated:
+            is_admin = user.is_superuser or (hasattr(user, 'profile') and user.profile and str(user.profile.role).upper() == 'ADMIN')
+            if not is_admin:
+                # Los usuarios no administradores solo ven las tareas que les fueron asignadas directamente
+                # Las tareas sin asignar solo las puede ver el admin
+                return AcademyTask.objects.filter(assigned_user=user)
         return AcademyTask.objects.all()
 
-    def resolve_all_materials(self, info):
-        return Material.objects.all()
+    def resolve_all_materials(self, info, scope=None, teacher_id=None, instrument_id=None, search=None):
+        from django.db.models import Q
+        qs = Material.objects.select_related('teacher', 'instrument').all()
+        if scope:
+            qs = qs.filter(scope=scope.upper())
+        if teacher_id:
+            qs = qs.filter(teacher_id=teacher_id)
+        if instrument_id:
+            qs = qs.filter(instrument_id=instrument_id)
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(description__icontains=search))
+        return qs.order_by('-created_at')
 
     def resolve_all_landing_pages(self, info):
         return LandingPage.objects.all()
@@ -568,6 +594,17 @@ class CreatePreReservation(graphene.Mutation):
     lesson = graphene.Field(LessonType)
 
     def mutate(self, info, nombre, telefono, profesor_nombre, fecha, hora, email=None, servicio='CLASE_PRUEBA', sala=None, modalidad='PRESENCIAL', notas=None):
+        from datetime import datetime, timedelta, date, time
+        if isinstance(hora, str):
+            parts = [int(p) for p in hora.split(':')]
+            hora = time(parts[0], parts[1])
+        if isinstance(fecha, str):
+            fecha = datetime.strptime(fecha, "%Y-%m-%d").date()
+
+        holiday = Holiday.objects.filter(date=fecha, is_active=True).first()
+        if holiday:
+            raise Exception(f"No es posible agendar clases en días feriados ({holiday.name}).")
+
         clean_service = servicio or 'CLASE_PRUEBA'
         if 'prueba' in str(clean_service).lower():
             clean_service = 'CLASE_PRUEBA'
@@ -586,12 +623,6 @@ class CreatePreReservation(graphene.Mutation):
         teacher = Teacher.objects.filter(name__icontains=profesor_nombre).first()
         if not teacher:
             teacher = Teacher.objects.first()
-        from datetime import datetime, timedelta, date, time
-        if isinstance(hora, str):
-            parts = [int(p) for p in hora.split(':')]
-            hora = time(parts[0], parts[1])
-        if isinstance(fecha, str):
-            fecha = datetime.strptime(fecha, "%Y-%m-%d").date()
 
         end_time = (datetime.combine(datetime.today(), hora) + timedelta(minutes=45)).time()
         lesson = Lesson.objects.create(
@@ -650,14 +681,14 @@ class CreatePreReservation(graphene.Mutation):
                     send_mail(
                         subject="Pre-reserva Clase de Prueba - Academia Détaché",
                         message=body,
-                        from_email=settings.email_contact or "academia@detache.cl",
+                        from_email=settings.smtp_from_email or "contacto@academiadetache.cl",
                         recipient_list=[email],
                         fail_silently=True
                     )
             except Exception as mail_err:
-                print(f"Error sending trial class email: {mail_err}")
+                print(f"Error sending trial email: {mail_err}")
 
-        return CreatePreReservation(success=True, lesson=lesson)
+        return CreatePreReservation(lesson=lesson, success=True)
 
 class CreateLesson(graphene.Mutation):
     class Arguments:
@@ -672,6 +703,10 @@ class CreateLesson(graphene.Mutation):
     lesson = graphene.Field(LessonType)
 
     def mutate(self, info, teacher_id, student_id, room_id, date, start_time, end_time, lesson_type="INDIVIDUAL"):
+        holiday = Holiday.objects.filter(date=date, is_active=True).first()
+        if holiday:
+            raise Exception(f"No es posible crear clases en días feriados ({holiday.name}).")
+
         teacher = Teacher.objects.get(pk=teacher_id)
         student = Student.objects.get(pk=student_id)
         room = Room.objects.get(pk=room_id)
@@ -1072,6 +1107,8 @@ class SendWhatsApp(graphene.Mutation):
             
             clean_num = phone_number[-8:] if len(phone_number) >= 8 else phone_number
             student = Student.objects.filter(phone_number__icontains=clean_num).first()
+            if not student:
+                student = Student.objects.filter(guardian_phone__icontains=clean_num).first()
             lead = Lead.objects.filter(telefono__icontains=clean_num).first()
             
             # Save outgoing message to history
@@ -1422,6 +1459,13 @@ class ConfirmLeadReservationWithLesson(graphene.Mutation):
 
     def mutate(self, info, lead_id, teacher_id, date, start_time, end_time, room_id=None, lesson_type="INDIVIDUAL"):
         try:
+            holiday = Holiday.objects.filter(date=date, is_active=True).first()
+            if holiday:
+                return ConfirmLeadReservationWithLesson(
+                    success=False,
+                    error=f"No es posible programar la clase en un día feriado ({holiday.name})."
+                )
+
             lead = Lead.objects.get(pk=lead_id)
             teacher = Teacher.objects.get(pk=teacher_id)
             room = Room.objects.filter(pk=room_id).first() if room_id else None
@@ -1731,14 +1775,87 @@ class CreateMaterial(graphene.Mutation):
         title = graphene.String(required=True)
         type = graphene.String(required=True)
         url = graphene.String(required=True)
+        description = graphene.String()
+        scope = graphene.String() # 'DETACHE' or 'TEACHER'
         teacher_id = graphene.Int()
+        instrument_id = graphene.Int()
+        level = graphene.String()
 
+    success = graphene.Boolean()
     material = graphene.Field(MaterialType)
+    error = graphene.String()
 
-    def mutate(self, info, title, type, url, teacher_id=None):
+    def mutate(self, info, title, type, url, description="", scope="DETACHE", teacher_id=None, instrument_id=None, level=""):
         teacher = Teacher.objects.filter(pk=teacher_id).first() if teacher_id else None
-        material = Material.objects.create(title=title, type=type, url=url, teacher=teacher)
-        return CreateMaterial(material=material)
+        instrument = Instrument.objects.filter(pk=instrument_id).first() if instrument_id else None
+        clean_scope = (scope or ('TEACHER' if teacher else 'DETACHE')).upper()
+        if clean_scope not in ['DETACHE', 'TEACHER']:
+            clean_scope = 'DETACHE'
+
+        material = Material.objects.create(
+            title=title,
+            type=type,
+            url=url,
+            description=description or "",
+            scope=clean_scope,
+            teacher=teacher,
+            instrument=instrument,
+            level=level or ""
+        )
+        log_user_action(info, "CREATE_MATERIAL", f"Creado material [{clean_scope}]: {material.title}")
+        return CreateMaterial(success=True, material=material)
+
+class UpdateMaterial(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        title = graphene.String()
+        type = graphene.String()
+        url = graphene.String()
+        description = graphene.String()
+        scope = graphene.String()
+        teacher_id = graphene.Int()
+        instrument_id = graphene.Int()
+        level = graphene.String()
+
+    success = graphene.Boolean()
+    material = graphene.Field(MaterialType)
+    error = graphene.String()
+
+    def mutate(self, info, id, title=None, type=None, url=None, description=None, scope=None, teacher_id=None, instrument_id=None, level=None):
+        try:
+            material = Material.objects.get(pk=id)
+            if title is not None: material.title = title
+            if type is not None: material.type = type
+            if url is not None: material.url = url
+            if description is not None: material.description = description
+            if scope is not None: material.scope = scope.upper()
+            if teacher_id is not None:
+                material.teacher = Teacher.objects.filter(pk=teacher_id).first() if teacher_id > 0 else None
+            if instrument_id is not None:
+                material.instrument = Instrument.objects.filter(pk=instrument_id).first() if instrument_id > 0 else None
+            if level is not None: material.level = level
+            material.save()
+            log_user_action(info, "UPDATE_MATERIAL", f"Actualizado material: {material.title}")
+            return UpdateMaterial(success=True, material=material)
+        except Material.DoesNotExist:
+            return UpdateMaterial(success=False, error="Material no encontrado.")
+
+class DeleteMaterial(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, id):
+        try:
+            material = Material.objects.get(pk=id)
+            title = material.title
+            material.delete()
+            log_user_action(info, "DELETE_MATERIAL", f"Eliminado material: {title}")
+            return DeleteMaterial(success=True)
+        except Material.DoesNotExist:
+            return DeleteMaterial(success=False, error="Material no encontrado.")
 
 class CreateStudentPrivateNote(graphene.Mutation):
     class Arguments:
@@ -2607,6 +2724,8 @@ class Mutation(graphene.ObjectType):
     create_student_pack = CreateStudentPack.Field()
     manual_deduct_class = ManualDeductClass.Field()
     create_material = CreateMaterial.Field()
+    update_material = UpdateMaterial.Field()
+    delete_material = DeleteMaterial.Field()
     create_student_private_note = CreateStudentPrivateNote.Field()
     create_student_wall_message = CreateStudentWallMessage.Field()
     create_plan = CreatePlan.Field()

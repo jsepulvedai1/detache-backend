@@ -153,11 +153,22 @@ class AcademyTaskAdmin(admin.ModelAdmin):
 
 @admin.register(Material)
 class MaterialAdmin(admin.ModelAdmin):
-    list_display = ('title', 'type', 'teacher', 'url', 'created_at')
-    list_filter = ('type', 'teacher', 'created_at')
-    search_fields = ('title', 'teacher__name')
+    list_display = ('title', 'scope', 'type', 'instrument', 'level', 'teacher', 'url', 'created_at')
+    list_filter = ('scope', 'type', 'instrument', 'teacher', 'created_at')
+    search_fields = ('title', 'description', 'teacher__name')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
+    actions = ['make_detache_official', 'make_teacher_scope']
+
+    def make_detache_official(self, request, queryset):
+        queryset.update(scope='DETACHE')
+        self.message_user(request, "Materiales marcados como Oficial Détaché ✅")
+    make_detache_official.short_description = "Convertir a Material Oficial Détaché"
+
+    def make_teacher_scope(self, request, queryset):
+        queryset.update(scope='TEACHER')
+        self.message_user(request, "Materiales marcados como ámbito Profesor")
+    make_teacher_scope.short_description = "Marcar como Material de Profesor"
 
 @admin.register(StudentPrivateNote)
 class StudentPrivateNoteAdmin(admin.ModelAdmin):
