@@ -131,13 +131,8 @@ class Lead(models.Model):
     STATUS_CHOICES = [
         ('NUEVO', 'Nuevo Lead'),
         ('CONTACTADO', 'Contactado'),
-        ('SEGUIMIENTO', 'Seguimiento'),
-        ('PRE_RESERVA', 'Pre-reserva'),
+        ('PRE_RESERVA', 'Pre-Reserva'),
         ('RESERVA_CONFIRMADA', 'Reserva Confirmada'),
-        ('CONCRETADO', 'Concretado (Alumno)'),
-        ('SIN_RESPUESTA', 'Sin Respuesta'),
-        ('LISTA_ESPERA', 'Lista de Espera'),
-        ('NO_CONCRETADO', 'No Concretado'),
     ]
 
     nombre = models.CharField(max_length=255)
