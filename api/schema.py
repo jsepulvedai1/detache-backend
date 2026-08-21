@@ -642,9 +642,9 @@ class CreatePreReservation(graphene.Mutation):
             from .whatsapp import WhatsAppService
             
             chat_summary = (
-                f"📋 Solicitud de Cita / Pre-Reserva Clínica:\n"
-                f"• Especialidad: {servicio or 'Clase de Prueba'}\n"
-                f"• Profesional: {teacher.name if teacher else profesor_nombre}\n"
+                f"📋 Solicitud de Reserva de Clase Inicial:\n"
+                f"• Clase / Instrumento: {servicio or 'Clase de Prueba'}\n"
+                f"• Profesor: {teacher.name if teacher else profesor_nombre}\n"
                 f"• Fecha: {fecha.strftime('%d/%m/%Y') if hasattr(fecha, 'strftime') else str(fecha)}\n"
                 f"• Horario: {hora.strftime('%H:%M') if hasattr(hora, 'strftime') else str(hora)}\n"
                 f"• Notas / Motivo: {notas or 'Sin notas adicionales'}"
@@ -710,6 +710,23 @@ class CreateLesson(graphene.Mutation):
         teacher = Teacher.objects.get(pk=teacher_id)
         student = Student.objects.get(pk=student_id)
         room = Room.objects.get(pk=room_id)
+
+        # Validar si el alumno tiene un pack de clases activo con créditos disponibles
+        from django.db.models import Sum
+        active_packs = StudentPack.objects.filter(student=student, is_active=True)
+        total_remaining = active_packs.aggregate(total=Sum('remaining_classes'))['total'] or 0
+
+        if total_remaining <= 0:
+            raise Exception(f"El alumno {student.name} no cuenta con clases disponibles en sus packs (0 créditos restantes). Debe adquirir o renovar un pack antes de agendar.")
+
+        # Contar clases pendientes o confirmadas ya agendadas que consumirán créditos
+        pending_scheduled_lessons = Lesson.objects.filter(
+            student=student,
+            status__in=['PENDING', 'CONFIRMED']
+        ).count()
+
+        if pending_scheduled_lessons >= total_remaining:
+            raise Exception(f"El alumno {student.name} ya tiene {pending_scheduled_lessons} clase(s) programada(s) que cubren la totalidad de sus {total_remaining} crédito(s) restante(s). Debe adquirir más clases para agendar nuevas sesiones.")
         
         lesson = Lesson.objects.create(
             teacher=teacher,
