@@ -139,9 +139,22 @@ class PlanType(DjangoObjectType):
         return str(self.price)
 
 class LeadType(DjangoObjectType):
+    fuente = graphene.String()
+    servicio = graphene.String()
+    estado = graphene.String()
+
     class Meta:
         model = Lead
         fields = ("id", "nombre", "telefono", "email", "edad", "servicio", "fuente", "estado", "asignado_a", "fecha_ingreso", "fecha_ultimo_contacto", "notas")
+
+    def resolve_fuente(self, info):
+        return str(self.fuente) if self.fuente else "WEB"
+
+    def resolve_servicio(self, info):
+        return str(self.servicio) if self.servicio else "CLASE_PRUEBA"
+
+    def resolve_estado(self, info):
+        return str(self.estado) if self.estado else "NUEVO"
 
 class LeadNoteType(DjangoObjectType):
     class Meta:
@@ -335,7 +348,7 @@ class Query(graphene.ObjectType):
         return Plan.objects.filter(pk=id).first()
 
     def resolve_all_leads(self, info):
-        return Lead.objects.all()
+        return Lead.objects.all().order_by('-fecha_ingreso', '-id')
         
     def resolve_lead_by_id(self, info, id):
         return Lead.objects.filter(pk=id).first()
@@ -522,11 +535,15 @@ class CreatePreReservation(graphene.Mutation):
     lesson = graphene.Field(LessonType)
 
     def mutate(self, info, nombre, telefono, profesor_nombre, fecha, hora, email=None, servicio='CLASE_PRUEBA', sala=None, modalidad='PRESENCIAL', notas=None):
+        clean_service = servicio or 'CLASE_PRUEBA'
+        if 'prueba' in str(clean_service).lower():
+            clean_service = 'CLASE_PRUEBA'
+
         lead = Lead.objects.create(
             nombre=nombre,
             telefono=telefono,
             email=email,
-            servicio=servicio or 'CLASE_PRUEBA',
+            servicio=clean_service,
             fuente='WEB',
             estado='PRE_RESERVA'
         )
@@ -555,6 +572,34 @@ class CreatePreReservation(graphene.Mutation):
             lesson_type='INDIVIDUAL'
         )
 
+        # Register initial appointment summary as ChatMessage for the Lead
+        try:
+            from .models import ChatMessage, GlobalSettings
+            from .whatsapp import WhatsAppService
+            
+            chat_summary = (
+                f"📋 Solicitud de Cita / Pre-Reserva Clínica:\n"
+                f"• Especialidad: {servicio or 'Clase de Prueba'}\n"
+                f"• Profesional: {teacher.name if teacher else profesor_nombre}\n"
+                f"• Fecha: {fecha.strftime('%d/%m/%Y') if hasattr(fecha, 'strftime') else str(fecha)}\n"
+                f"• Horario: {hora.strftime('%H:%M') if hasattr(hora, 'strftime') else str(hora)}\n"
+                f"• Notas / Motivo: {notas or 'Sin notas adicionales'}"
+            )
+            ChatMessage.objects.create(
+                lead=lead,
+                phone_number=telefono,
+                sender='LEAD',
+                message_text=chat_summary
+            )
+
+            # Auto-reply via WhatsApp if enabled
+            gs = GlobalSettings.get_singleton()
+            if gs.whatsapp_auto_reply and gs.whatsapp_welcome_template:
+                template = gs.whatsapp_welcome_template.replace('{nombre}', nombre)
+                WhatsAppService.send_text_message(telefono, template)
+        except Exception as chat_err:
+            print(f"Error registering chat message / WhatsApp notification: {chat_err}")
+
         # Send confirmation email if email provided
         if email:
             try:
@@ -566,8 +611,8 @@ class CreatePreReservation(graphene.Mutation):
                     body = template.format(
                         nombre=nombre,
                         profesor=teacher.name if teacher else profesor_nombre,
-                        fecha=fecha.strftime("%d/%m/%Y"),
-                        hora=hora.strftime("%H:%M")
+                        fecha=fecha.strftime("%d/%m/%Y") if hasattr(fecha, 'strftime') else str(fecha),
+                        hora=hora.strftime("%H:%M") if hasattr(hora, 'strftime') else str(hora)
                     )
                     send_mail(
                         subject="Pre-reserva Clase de Prueba - Academia Détaché",
@@ -1039,6 +1084,35 @@ class CreateLead(graphene.Mutation):
                     )
             except Exception as lesson_err:
                 print(f"Error creating pre-reservation lesson: {lesson_err}")
+
+        # Register initial contact / inquiry as ChatMessage for the Lead
+        try:
+            from .models import ChatMessage, GlobalSettings
+            from .whatsapp import WhatsAppService
+            
+            chat_parts = [f"📋 Solicitud Web de Contacto / Reserva:"]
+            chat_parts.append(f"• Servicio / Especialidad: {servicio or 'General'}")
+            if parsed_res:
+                chat_parts.append(f"• Profesional: {parsed_res.get('profesor')}")
+                chat_parts.append(f"• Fecha: {parsed_res.get('fecha')}")
+                chat_parts.append(f"• Horario: {parsed_res.get('start_time')} - {parsed_res.get('end_time')}")
+            elif email and "|" in email:
+                chat_parts.append(f"• Mensaje / Motivo: {email.split('|', 1)[-1].strip()}")
+
+            ChatMessage.objects.create(
+                lead=lead,
+                phone_number=telefono,
+                sender='LEAD',
+                message_text="\n".join(chat_parts)
+            )
+
+            # Auto-reply via WhatsApp if enabled
+            gs = GlobalSettings.get_singleton()
+            if gs.whatsapp_auto_reply and gs.whatsapp_welcome_template:
+                template = gs.whatsapp_welcome_template.replace('{nombre}', nombre)
+                WhatsAppService.send_text_message(telefono, template)
+        except Exception as chat_err:
+            print(f"Error registering chat message in CreateLead: {chat_err}")
 
         try:
             OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})

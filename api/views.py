@@ -3,6 +3,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views import View
 from django.utils.decorators import method_decorator
+from django.utils import timezone
 from .models import Lesson
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -12,20 +13,19 @@ class WhatsAppWebhookView(View):
         Receives webhooks from Evolution API.
         """
         print(f"--- WEBHOOK RECEIVED ---")
-        print(f"Body: {request.body.decode('utf-8')}")
         try:
             data = json.loads(request.body)
             event_type = data.get('event', '').lower().replace('.', '_')
             
             # Evolution API v2 uses 'messages.upsert' or 'MESSAGES_UPSERT'
-            if event_type == 'messages_upsert':
-                print(f"Evento Detectado: messages.upsert")
+            if event_type in ['messages_upsert', 'send_message', 'messages_update']:
                 message_data = data.get('data', {})
                 key_data = message_data.get('key', {})
                 msg_id = key_data.get('id', '')
                 from_me = key_data.get('fromMe', False)
                 remote_jid = key_data.get('remoteJid', '')
-                phone_number = remote_jid.split('@')[0]
+                # Clean phone number (removing @s.whatsapp.net and device ids like :23)
+                phone_number = remote_jid.split('@')[0].split(':')[0]
                 
                 # Check for buttons or text response triggers
                 msg = message_data.get('message', {})
