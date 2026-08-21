@@ -245,6 +245,7 @@ class Student(models.Model):
     start_date = models.DateField(default=timezone.now)
     # The instrument they are currently studying
     primary_instrument = models.ForeignKey('Instrument', related_name='students', on_delete=models.SET_NULL, null=True, blank=True)
+    assigned_teachers = models.ManyToManyField('Teacher', related_name='assigned_students', blank=True)
     user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='student_profile')
 
     def __str__(self):
@@ -368,12 +369,18 @@ class AcademyTask(models.Model):
         ('RECEPCION', 'Recepción'),
         ('ADMINISTRACION', 'Administración'),
     ]
+    STATUS_CHOICES = [
+        ('PENDING', 'Pendiente'),
+        ('IN_PROGRESS', 'En Proceso'),
+        ('COMPLETED', 'Completada'),
+    ]
     
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     assigned_to = models.CharField(max_length=50, choices=ROLE_CHOICES, default='RECEPCION')
     assigned_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_tasks')
     priority = models.CharField(max_length=50, choices=PRIORITY_CHOICES, default='RECORDATORIO')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     log = models.TextField(blank=True, null=True, help_text="Bitácora de acciones")
     is_completed = models.BooleanField(default=False)
     due_date = models.DateField(blank=True, null=True)
@@ -383,7 +390,21 @@ class AcademyTask(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['is_completed', '-created_at']
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if self.status == 'COMPLETED':
+            self.is_completed = True
+            if not self.completed_at:
+                self.completed_at = timezone.now()
+        elif self.is_completed:
+            self.status = 'COMPLETED'
+            if not self.completed_at:
+                self.completed_at = timezone.now()
+        else:
+            self.is_completed = False
+            self.completed_at = None
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"[{self.priority}] {self.title}"
@@ -539,6 +560,18 @@ class GlobalSettings(models.Model):
     instagram_url = models.CharField(max_length=255, default='https://instagram.com/academia.detache')
     trial_class_email_template = models.TextField(
         default='Hola {nombre},\n\nHemos recibido tu pre-reserva de Clase de Prueba con {profesor} para el {fecha} a las {hora}.\n\nPor favor, ten en cuenta que para confirmar tu cupo debes realizar el pago antes de las 20:00 hrs de hoy. De lo contrario, el horario quedará liberado automáticamente.\n\nSaludos,\nAcademia Détaché'
+    )
+
+    # WhatsApp & Evolution API Settings
+    whatsapp_number = models.CharField(max_length=50, default='+56 9 6427 9239', blank=True, null=True)
+    whatsapp_assigned_to = models.CharField(max_length=100, default='Recepción / Admisiones', blank=True, null=True)
+    evolution_api_url = models.CharField(max_length=255, default='http://localhost:8080', blank=True, null=True)
+    evolution_api_key = models.CharField(max_length=255, default='admin_apikey_123', blank=True, null=True)
+    evolution_instance_name = models.CharField(max_length=100, default='MainInstance', blank=True, null=True)
+    whatsapp_auto_reply = models.BooleanField(default=True)
+    whatsapp_welcome_template = models.TextField(
+        default='¡Hola {nombre}! Gracias por contactar a Academia Détaché 🎻. ¿En qué instrumento o clase estás interesado/a?',
+        blank=True
     )
 
     class Meta:

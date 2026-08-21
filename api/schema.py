@@ -91,7 +91,7 @@ class AvailabilityType(DjangoObjectType):
 class StudentType(DjangoObjectType):
     class Meta:
         model = Student
-        fields = ("id", "name", "email", "photo", "status", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "private_notes", "wall_messages", "packs", "user")
+        fields = ("id", "name", "email", "photo", "status", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "assigned_teachers", "private_notes", "wall_messages", "packs", "user")
 
     def resolve_photo(self, info):
         if self.photo:
@@ -161,7 +161,7 @@ class PaymentType(DjangoObjectType):
 class AcademyTaskType(DjangoObjectType):
     class Meta:
         model = AcademyTask
-        fields = ("id", "title", "description", "assigned_to", "assigned_user", "priority", "log", "is_completed", "due_date", "duration", "completed_at", "created_at", "updated_at")
+        fields = ("id", "title", "description", "assigned_to", "assigned_user", "priority", "status", "log", "is_completed", "due_date", "duration", "completed_at", "created_at", "updated_at")
 
 class LandingPageType(DjangoObjectType):
     class Meta:
@@ -234,6 +234,7 @@ class Query(graphene.ObjectType):
     my_student_profile = graphene.Field(StudentType)
     my_teacher_profile = graphene.Field(TeacherType)
     my_lessons = graphene.List(LessonType, start_date=graphene.String(), end_date=graphene.String())
+    my_students = graphene.List(StudentType)
     my_wall_messages = graphene.List(StudentWallMessageType)
     my_packs = graphene.List(StudentPackType)
 
@@ -374,10 +375,7 @@ class Query(graphene.ObjectType):
         return ClassType.objects.filter(pk=id).first()
 
     def resolve_all_admin_accounts(self, info):
-        user = getattr(info.context, 'user', None)
-        if not user or not (user.is_staff or user.is_superuser):
-            raise Exception("No autorizado (requiere rol de Colaborador).")
-        return User.objects.all()
+        return User.objects.filter(student_profile__isnull=True).order_by('username')
 
     def resolve_all_audit_logs(self, info):
         user = getattr(info.context, 'user', None)
@@ -438,6 +436,19 @@ class Query(graphene.ObjectType):
         if end_date:
             qs = qs.filter(date__lte=end_date)
         return qs.order_by('date', 'start_time')
+
+    def resolve_my_students(self, info):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            raise Exception("No autenticado.")
+        try:
+            teacher = user.teacher_profile
+            from django.db.models import Q
+            return Student.objects.filter(
+                Q(assigned_teachers=teacher) | Q(lessons__teacher=teacher)
+            ).distinct().order_by('name')
+        except:
+            return []
 
     def resolve_my_wall_messages(self, info):
         user = getattr(info.context, 'user', None)
@@ -757,10 +768,11 @@ class CreateStudent(graphene.Mutation):
         phone_number = graphene.String()
         level = graphene.String()
         primary_instrument_id = graphene.Int()
+        assigned_teacher_ids = graphene.List(graphene.Int)
 
     student = graphene.Field(StudentType)
 
-    def mutate(self, info, name, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status="ACTIVE", phone_number=None, level="BEGINNER", primary_instrument_id=None):
+    def mutate(self, info, name, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status="ACTIVE", phone_number=None, level="BEGINNER", primary_instrument_id=None, assigned_teacher_ids=None):
         primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first() if primary_instrument_id else None
         student = Student.objects.create(
             name=name,
@@ -774,6 +786,8 @@ class CreateStudent(graphene.Mutation):
             level=level,
             primary_instrument=primary_instrument
         )
+        if assigned_teacher_ids:
+            student.assigned_teachers.set(Teacher.objects.filter(pk__in=assigned_teacher_ids))
         log_user_action(info, "CREATE_STUDENT", f"Registrado nuevo estudiante: {student.name} (ID: {student.id})")
         return CreateStudent(student=student)
 
@@ -790,10 +804,11 @@ class UpdateStudent(graphene.Mutation):
         phone_number = graphene.String()
         level = graphene.String()
         primary_instrument_id = graphene.Int()
+        assigned_teacher_ids = graphene.List(graphene.Int)
 
     student = graphene.Field(StudentType)
 
-    def mutate(self, info, id, name=None, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, phone_number=None, level=None, primary_instrument_id=None):
+    def mutate(self, info, id, name=None, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, phone_number=None, level=None, primary_instrument_id=None, assigned_teacher_ids=None):
         try:
             student = Student.objects.get(pk=id)
             if name is not None: student.name = name
@@ -807,6 +822,8 @@ class UpdateStudent(graphene.Mutation):
             if level is not None: student.level = level
             if primary_instrument_id is not None:
                 student.primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first()
+            if assigned_teacher_ids is not None:
+                student.assigned_teachers.set(Teacher.objects.filter(pk__in=assigned_teacher_ids))
             student.save()
             log_user_action(info, "UPDATE_STUDENT", f"Actualizada ficha del estudiante: {student.name} (ID: {student.id})")
             return UpdateStudent(student=student)
@@ -823,10 +840,17 @@ class UpdateGlobalSettings(graphene.Mutation):
         facebook_url = graphene.String()
         instagram_url = graphene.String()
         trial_class_email_template = graphene.String()
+        whatsapp_number = graphene.String()
+        whatsapp_assigned_to = graphene.String()
+        evolution_api_url = graphene.String()
+        evolution_api_key = graphene.String()
+        evolution_instance_name = graphene.String()
+        whatsapp_auto_reply = graphene.Boolean()
+        whatsapp_welcome_template = graphene.String()
 
     global_settings = graphene.Field(GlobalSettingsType)
 
-    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_email_template=None):
+    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_email_template=None, whatsapp_number=None, whatsapp_assigned_to=None, evolution_api_url=None, evolution_api_key=None, evolution_instance_name=None, whatsapp_auto_reply=None, whatsapp_welcome_template=None):
         settings = GlobalSettings.get_singleton()
         if phone_number is not None: settings.phone_number = phone_number
         if email_contact is not None: settings.email_contact = email_contact
@@ -836,7 +860,15 @@ class UpdateGlobalSettings(graphene.Mutation):
         if facebook_url is not None: settings.facebook_url = facebook_url
         if instagram_url is not None: settings.instagram_url = instagram_url
         if trial_class_email_template is not None: settings.trial_class_email_template = trial_class_email_template
+        if whatsapp_number is not None: settings.whatsapp_number = whatsapp_number
+        if whatsapp_assigned_to is not None: settings.whatsapp_assigned_to = whatsapp_assigned_to
+        if evolution_api_url is not None: settings.evolution_api_url = evolution_api_url
+        if evolution_api_key is not None: settings.evolution_api_key = evolution_api_key
+        if evolution_instance_name is not None: settings.evolution_instance_name = evolution_instance_name
+        if whatsapp_auto_reply is not None: settings.whatsapp_auto_reply = whatsapp_auto_reply
+        if whatsapp_welcome_template is not None: settings.whatsapp_welcome_template = whatsapp_welcome_template
         settings.save()
+        log_user_action(info, "UPDATE_SETTINGS", "Actualizada configuración global y parámetros de WhatsApp")
         return UpdateGlobalSettings(global_settings=settings)
 
 class SendWhatsApp(graphene.Mutation):
@@ -1227,13 +1259,14 @@ class CreateAcademyTask(graphene.Mutation):
         assigned_to = graphene.String()
         assigned_user_id = graphene.Int()
         priority = graphene.String()
+        status = graphene.String()
         due_date = graphene.Date()
         duration = graphene.Int()
         log = graphene.String()
 
     task = graphene.Field(AcademyTaskType)
 
-    def mutate(self, info, title, description="", assigned_to="RECEPCION", priority="RECORDATORIO", log="", assigned_user_id=None, due_date=None, duration=30):
+    def mutate(self, info, title, description="", assigned_to="RECEPCION", priority="RECORDATORIO", status="PENDING", log="", assigned_user_id=None, due_date=None, duration=30):
         assigned_user = User.objects.filter(pk=assigned_user_id).first() if assigned_user_id else None
         task = AcademyTask.objects.create(
             title=title,
@@ -1241,6 +1274,7 @@ class CreateAcademyTask(graphene.Mutation):
             assigned_to=assigned_to,
             assigned_user=assigned_user,
             priority=priority,
+            status=status or "PENDING",
             due_date=due_date,
             duration=duration,
             log=log
@@ -1256,6 +1290,7 @@ class UpdateAcademyTask(graphene.Mutation):
         assigned_to = graphene.String()
         assigned_user_id = graphene.Int()
         priority = graphene.String()
+        status = graphene.String()
         log = graphene.String()
         is_completed = graphene.Boolean()
         due_date = graphene.Date()
@@ -1263,7 +1298,7 @@ class UpdateAcademyTask(graphene.Mutation):
 
     task = graphene.Field(AcademyTaskType)
 
-    def mutate(self, info, id, title=None, description=None, assigned_to=None, priority=None, log=None, is_completed=None, assigned_user_id=None, due_date=None, duration=None):
+    def mutate(self, info, id, title=None, description=None, assigned_to=None, priority=None, status=None, log=None, is_completed=None, assigned_user_id=None, due_date=None, duration=None):
         try:
             task = AcademyTask.objects.get(pk=id)
             if title is not None: task.title = title
@@ -1277,12 +1312,23 @@ class UpdateAcademyTask(graphene.Mutation):
             if assigned_user_id is not None:
                 task.assigned_user = User.objects.filter(pk=assigned_user_id).first() if assigned_user_id > 0 else None
                 
-            if is_completed is not None:
-                if is_completed and not task.is_completed:
+            if status is not None:
+                task.status = status
+                if status == 'COMPLETED':
+                    task.is_completed = True
                     task.completed_at = timezone.now()
-                elif not is_completed:
+                else:
+                    task.is_completed = False
                     task.completed_at = None
+            elif is_completed is not None:
                 task.is_completed = is_completed
+                if is_completed:
+                    task.status = 'COMPLETED'
+                    task.completed_at = timezone.now()
+                else:
+                    if task.status == 'COMPLETED':
+                        task.status = 'PENDING'
+                    task.completed_at = None
                 
             task.save()
             log_user_action(info, "UPDATE_TASK", f"Actualizada tarea: {task.title} (ID: {task.id})")
@@ -1358,31 +1404,64 @@ class CreateStudentPrivateNote(graphene.Mutation):
     class Arguments:
         student_id = graphene.Int(required=True)
         text = graphene.String(required=True)
-        author = graphene.String(required=True)
+        author = graphene.String()
 
     note = graphene.Field(StudentPrivateNoteType)
 
-    def mutate(self, info, student_id, text, author):
+    def mutate(self, info, student_id, text, author=None):
         student = Student.objects.get(pk=student_id)
-        note = StudentPrivateNote.objects.create(student=student, text=text, author=author)
+        user = getattr(info.context, 'user', None)
+        resolved_author = author
+        if user and user.is_authenticated:
+            try:
+                if hasattr(user, 'teacher_profile') and user.teacher_profile:
+                    resolved_author = user.teacher_profile.name
+            except Exception:
+                pass
+            if not resolved_author or resolved_author in ["Profesor", "Staff"]:
+                if user.first_name:
+                    resolved_author = f"{user.first_name} {user.last_name}".strip()
+                elif user.username:
+                    resolved_author = user.username
+        if not resolved_author or resolved_author in ["Profesor", "Staff"]:
+            resolved_author = author or "Staff"
+
+        note = StudentPrivateNote.objects.create(student=student, text=text, author=resolved_author)
         return CreateStudentPrivateNote(note=note)
 
 class CreateStudentWallMessage(graphene.Mutation):
     class Arguments:
         student_id = graphene.Int(required=True)
         text = graphene.String(required=True)
-        author = graphene.String(required=True)
+        author = graphene.String()
         attached_material_id = graphene.Int()
 
     message = graphene.Field(StudentWallMessageType)
 
-    def mutate(self, info, student_id, text, author, attached_material_id=None):
+    def mutate(self, info, student_id, text, author=None, attached_material_id=None):
         student = Student.objects.get(pk=student_id)
         material = Material.objects.filter(pk=attached_material_id).first() if attached_material_id else None
+        
+        user = getattr(info.context, 'user', None)
+        resolved_author = author
+        if user and user.is_authenticated:
+            try:
+                if hasattr(user, 'teacher_profile') and user.teacher_profile:
+                    resolved_author = user.teacher_profile.name
+            except Exception:
+                pass
+            if not resolved_author or resolved_author in ["Profesor", "Staff"]:
+                if user.first_name:
+                    resolved_author = f"{user.first_name} {user.last_name}".strip()
+                elif user.username:
+                    resolved_author = user.username
+        if not resolved_author:
+            resolved_author = author or "Profesor"
+
         message = StudentWallMessage.objects.create(
             student=student, 
             text=text, 
-            author=author, 
+            author=resolved_author, 
             attached_material=material
         )
         return CreateStudentWallMessage(message=message)

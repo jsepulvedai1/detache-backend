@@ -1,16 +1,28 @@
 import requests
 from django.conf import settings
 
+def get_evolution_config():
+    from .models import GlobalSettings
+    try:
+        gs = GlobalSettings.get_singleton()
+        api_url = (gs.evolution_api_url or getattr(settings, 'EVOLUTION_API_URL', 'http://localhost:8080')).rstrip('/')
+        api_key = gs.evolution_api_key or getattr(settings, 'EVOLUTION_API_KEY', 'admin_apikey_123')
+        instance_name = gs.evolution_instance_name or getattr(settings, 'EVOLUTION_INSTANCE_NAME', 'MainInstance')
+        return api_url, api_key, instance_name
+    except Exception:
+        return getattr(settings, 'EVOLUTION_API_URL', 'http://localhost:8080').rstrip('/'), getattr(settings, 'EVOLUTION_API_KEY', 'admin_apikey_123'), getattr(settings, 'EVOLUTION_INSTANCE_NAME', 'MainInstance')
+
 class WhatsAppService:
     @staticmethod
     def send_text_message(phone_number, message):
         """
         Sends a text message using the Evolution API.
         """
-        url = f"{settings.EVOLUTION_API_URL}/message/sendText/{settings.EVOLUTION_INSTANCE_NAME}"
+        api_url, api_key, instance_name = get_evolution_config()
+        url = f"{api_url}/message/sendText/{instance_name}"
         
         headers = {
-            'apikey': settings.EVOLUTION_API_KEY,
+            'apikey': api_key,
             'Content-Type': 'application/json'
         }
         
@@ -20,12 +32,13 @@ class WhatsAppService:
         }
         
         try:
-            response = requests.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
             if response.status_code not in [200, 201]:
                 print(f"Error Evolution API ({response.status_code}): {response.text}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
+            print(f"WhatsApp send_text_message error: {e}")
             return None
 
     @staticmethod
@@ -34,10 +47,11 @@ class WhatsAppService:
         Sends a message with interactive buttons using Evolution API.
         'buttons' should be a list of dicts: [{'displayText': 'Sí', 'buttonId': 'id1'}, ...]
         """
-        url = f"{settings.EVOLUTION_API_URL}/message/sendButtons/{settings.EVOLUTION_INSTANCE_NAME}"
+        api_url, api_key, instance_name = get_evolution_config()
+        url = f"{api_url}/message/sendButtons/{instance_name}"
         
         headers = {
-            'apikey': settings.EVOLUTION_API_KEY,
+            'apikey': api_key,
             'Content-Type': 'application/json'
         }
         
