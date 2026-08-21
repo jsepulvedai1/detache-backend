@@ -44,7 +44,8 @@ class WhatsAppWebhookView(View):
                         self.cancel_last_lesson(phone_number)
 
                 # Save to ChatMessage database if not duplicated
-                from .models import ChatMessage, Student, Lead
+                from .models import ChatMessage, Student, Lead, GlobalSettings
+                from .whatsapp import WhatsAppService
                 
                 if msg_id and ChatMessage.objects.filter(message_id=msg_id).exists():
                     print(f"Webhook: Mensaje duplicado recibido, ignorando: {msg_id}")
@@ -57,54 +58,88 @@ class WhatsAppWebhookView(View):
                         elif 'documentMessage' in msg:
                             text_content = "[Documento]"
                         elif 'audioMessage' in msg:
-                            text_content = "[Audio]"
+                            text_content = "[Nota de Voz / Audio]"
+                        elif 'videoMessage' in msg:
+                            text_content = "[Video]"
+                        elif 'stickerMessage' in msg:
+                            text_content = "[Sticker]"
+                        elif 'locationMessage' in msg:
+                            text_content = "[Ubicación]"
+                        elif 'contactMessage' in msg:
+                            text_content = "[Contacto compartido]"
                         else:
-                            text_content = ""
+                            text_content = "[Mensaje recibido]"
 
-                    if text_content:
-                        clean_num = phone_number[-8:] if len(phone_number) >= 8 else phone_number
-                        student = Student.objects.filter(phone_number__icontains=clean_num).first()
-                        if not student:
-                            student = Student.objects.filter(guardian_phone__icontains=clean_num).first()
-                        lead = Lead.objects.filter(telefono__icontains=clean_num).first()
-                        
-                        if not student and not lead:
-                            print(f"Webhook: Creando nuevo lead para {phone_number}")
-                            lead = Lead.objects.create(
-                                nombre=f"Contacto WA {phone_number}",
-                                telefono=phone_number,
-                                fuente='WHATSAPP',
-                                estado='NUEVO'
-                            )
-                            try:
-                                from api.schema import OnLeadUpdated
-                                OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
-                            except Exception as ws_err:
-                                print(f"Error broadcasting new lead: {ws_err}")
-                        elif lead:
-                            if lead.estado == 'NUEVO':
-                                lead.estado = 'CONTACTADO'
-                            lead.fecha_ultimo_contacto = timezone.now()
-                            lead.save()
-                            try:
-                                from api.schema import OnLeadUpdated
-                                OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
-                            except Exception as ws_err:
-                                print(f"Error broadcasting lead update: {ws_err}")
+                    clean_num = phone_number[-8:] if len(phone_number) >= 8 else phone_number
+                    formatted_phone = f"+{phone_number}" if not phone_number.startswith("+") else phone_number
+                    
+                    student = Student.objects.filter(phone_number__icontains=clean_num).first()
+                    if not student:
+                        student = Student.objects.filter(guardian_phone__icontains=clean_num).first()
+                    lead = Lead.objects.filter(telefono__icontains=clean_num).first()
+                    
+                    # Capture WhatsApp contact pushName if available
+                    push_name = (
+                        message_data.get('pushName') or 
+                        data.get('pushName') or 
+                        data.get('data', {}).get('pushName') or
+                        ""
+                    ).strip()
 
-                        sender = 'ACADEMY' if from_me else ('STUDENT' if student else 'LEAD')
-                        
-                        ChatMessage.objects.create(
-                            lead=lead,
-                            student=student,
-                            phone_number=phone_number,
-                            sender=sender,
-                            message_text=text_content,
-                            message_id=msg_id
+                    is_brand_new_lead = False
+                    if not student and not lead:
+                        lead_name = push_name if push_name else f"Contacto WA {formatted_phone}"
+                        print(f"Webhook: Creando nuevo lead '{lead_name}' para {formatted_phone}")
+                        lead = Lead.objects.create(
+                            nombre=lead_name,
+                            telefono=formatted_phone,
+                            fuente='WHATSAPP',
+                            estado='NUEVO',
+                            fecha_ultimo_contacto=timezone.now()
                         )
-                        print(f"Webhook: Guardado mensaje de {sender} para {phone_number}: {text_content}")
+                        is_brand_new_lead = True
+                        try:
+                            from api.schema import OnLeadUpdated
+                            OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "created"})
+                        except Exception as ws_err:
+                            print(f"Error broadcasting new lead: {ws_err}")
+                    elif lead:
+                        # Update lead name if previously had default name and now has a pushName
+                        if push_name and (lead.nombre.startswith("Contacto WA") or lead.nombre.startswith("Contacto WhatsApp")):
+                            lead.nombre = push_name
+                        if lead.estado == 'NUEVO' and not from_me:
+                            lead.estado = 'CONTACTADO'
+                        lead.fecha_ultimo_contacto = timezone.now()
+                        lead.save()
+                        try:
+                            from api.schema import OnLeadUpdated
+                            OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+                        except Exception as ws_err:
+                            print(f"Error broadcasting lead update: {ws_err}")
 
+                    sender = 'ACADEMY' if from_me else ('STUDENT' if student else 'LEAD')
+                    
+                    ChatMessage.objects.create(
+                        lead=lead,
+                        student=student,
+                        phone_number=formatted_phone,
+                        sender=sender,
+                        message_text=text_content,
+                        message_id=msg_id
+                    )
+                    print(f"Webhook: Guardado mensaje de {sender} para {formatted_phone}: {text_content}")
 
+                    # Auto-reply for brand new leads when incoming message from outside
+                    if is_brand_new_lead and not from_me:
+                        try:
+                            gs = GlobalSettings.get_singleton()
+                            if gs.whatsapp_auto_reply and gs.whatsapp_welcome_template:
+                                first_name = lead.nombre.split()[0] if lead.nombre else ""
+                                welcome_msg = gs.whatsapp_welcome_template.replace('{nombre}', first_name)
+                                WhatsAppService.send_text_message(formatted_phone, welcome_msg)
+                                print(f"Webhook: Auto-reply enviado a nuevo lead {formatted_phone}")
+                        except Exception as auto_err:
+                            print(f"Error sending auto-reply in webhook: {auto_err}")
 
             return JsonResponse({"status": "SUCCESS"})
         except Exception as e:
@@ -294,78 +329,105 @@ class MercadoPagoWebhookView(View):
                         
                         if lead_id and plan_id:
                             lead = Lead.objects.get(pk=int(lead_id))
-                            plan = Plan.objects.get(pk=int(plan_id))
                             
-                            # Check if Student already exists or create one
-                            student = None
-                            if lead.telefono:
-                                # Match by last 8 digits of phone
-                                clean_phone = lead.telefono[-8:]
-                                student = Student.objects.filter(phone_number__icontains=clean_phone).first()
-                            
-                            if not student and lead.email:
-                                student = Student.objects.filter(email__iexact=lead.email.strip()).first()
-
-                            if not student:
-                                student = Student.objects.filter(name__iexact=lead.nombre.strip()).first()
-                            
-                            if not student:
-                                student = Student.objects.create(
-                                    name=lead.nombre,
-                                    email=lead.email,
-                                    phone_number=lead.telefono,
-                                    status='ACTIVE'
-                                )
-                                print(f"Webhook created new student {student.name} for lead {lead.id}")
-                            else:
-                                if student.status != 'ACTIVE':
-                                    student.status = 'ACTIVE'
-                                    student.save()
-                                print(f"Webhook matched existing student {student.name} (ID: {student.id})")
-                            
-                            # Convert any lessons
-                            lessons_updated = Lesson.objects.filter(lead=lead).update(student=student, is_pre_reservation=False)
-                            print(f"Webhook converted {lessons_updated} lessons to student {student.id}")
-                            
-                            # Mark Lead as concreted
-                            lead.estado = 'CONCRETADO'
-                            lead.save()
-                            
-                            # Check if payment already recorded to prevent duplicates
-                            existing_payment = Payment.objects.filter(description__icontains=payment_id).first()
-                            if not existing_payment:
-                                pack = StudentPack.objects.create(
-                                    student=student,
-                                    plan=plan,
-                                    purchase_date=timezone.now()
-                                )
-                                print(f"Webhook created student pack {pack.id} for plan {plan.name}")
+                            if plan_id in ['trial', '0']:
+                                # Lead paid for Initial / Trial Class
+                                lead.estado = 'RESERVA_CONFIRMADA'
+                                lead.save()
                                 
-                                # Register approved payment
-                                Payment.objects.create(
-                                    student=student,
-                                    amount=float(transaction_amount),
-                                    method='CARD',
-                                    description=f"Pago aprobado por Mercado Pago (ID: {payment_id}) para {plan.name}",
-                                    pack=pack
-                                )
-                                print(f"Webhook registered payment for student {student.name}")
+                                lessons_updated = Lesson.objects.filter(lead=lead).update(status='CONFIRMED', is_pre_reservation=False)
+                                print(f"Webhook confirmed {lessons_updated} trial lessons for lead {lead.id}")
                                 
-                                # Send purchase notifications (email & WhatsApp)
-                                try:
-                                    from .whatsapp import WhatsAppService
-                                    WhatsAppService.send_purchase_notifications(student, plan, transaction_amount)
-                                except Exception as notif_err:
-                                    print(f"Error triggering purchase notifications: {notif_err}")
-
-                                # Broadcast updates to leads view
-                                try:
-                                    from api.schema import OnLeadUpdated
-                                    OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
-                                except Exception as ws_err:
-                                    print(f"Error broadcasting lead update: {ws_err}")
+                                existing_payment = Payment.objects.filter(description__icontains=payment_id).first()
+                                if not existing_payment:
+                                    from .models import GlobalSettings
+                                    gs = GlobalSettings.get_singleton()
+                                    trial_amount = float(transaction_amount) if transaction_amount else float(gs.trial_class_price or 15000)
+                                    Payment.objects.create(
+                                        amount=trial_amount,
+                                        method='CARD',
+                                        description=f"Pago Clase Inicial aprobado por Mercado Pago (ID: {payment_id}) para {lead.nombre}"
+                                    )
+                                    print(f"Webhook registered trial class payment for lead {lead.nombre}")
+                                    
+                                    try:
+                                        from api.schema import OnLeadUpdated
+                                        OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+                                    except Exception as ws_err:
+                                        print(f"Error broadcasting lead update: {ws_err}")
                             else:
-                                print(f"Payment {payment_id} was already processed.")
+                                plan = Plan.objects.get(pk=int(plan_id))
+                                
+                                # Check if Student already exists or create one
+                                student = None
+                                if lead.telefono:
+                                    # Match by last 8 digits of phone
+                                    clean_phone = lead.telefono[-8:]
+                                    student = Student.objects.filter(phone_number__icontains=clean_phone).first()
+                                
+                                if not student and lead.email:
+                                    student = Student.objects.filter(email__iexact=lead.email.strip()).first()
+
+                                if not student:
+                                    student = Student.objects.filter(name__iexact=lead.nombre.strip()).first()
+                                
+                                if not student:
+                                    student = Student.objects.create(
+                                        name=lead.nombre,
+                                        email=lead.email,
+                                        phone_number=lead.telefono,
+                                        status='ACTIVE'
+                                    )
+                                    print(f"Webhook created new student {student.name} for lead {lead.id}")
+                                else:
+                                    if student.status != 'ACTIVE':
+                                        student.status = 'ACTIVE'
+                                        student.save()
+                                    print(f"Webhook matched existing student {student.name} (ID: {student.id})")
+                                
+                                # Convert any lessons
+                                lessons_updated = Lesson.objects.filter(lead=lead).update(student=student, is_pre_reservation=False)
+                                print(f"Webhook converted {lessons_updated} lessons to student {student.id}")
+                                
+                                # Mark Lead as concreted
+                                lead.estado = 'CONCRETADO'
+                                lead.save()
+                                
+                                # Check if payment already recorded to prevent duplicates
+                                existing_payment = Payment.objects.filter(description__icontains=payment_id).first()
+                                if not existing_payment:
+                                    pack = StudentPack.objects.create(
+                                        student=student,
+                                        plan=plan,
+                                        purchase_date=timezone.now()
+                                    )
+                                    print(f"Webhook created student pack {pack.id} for plan {plan.name}")
+                                    
+                                    # Register approved payment
+                                    Payment.objects.create(
+                                        student=student,
+                                        amount=float(transaction_amount),
+                                        method='CARD',
+                                        description=f"Pago aprobado por Mercado Pago (ID: {payment_id}) para {plan.name}",
+                                        pack=pack
+                                    )
+                                    print(f"Webhook registered payment for student {student.name}")
+                                
+                                    # Send purchase notifications (email & WhatsApp)
+                                    try:
+                                        from .whatsapp import WhatsAppService
+                                        WhatsAppService.send_purchase_notifications(student, plan, transaction_amount)
+                                    except Exception as notif_err:
+                                        print(f"Error triggering purchase notifications: {notif_err}")
+
+                                    # Broadcast updates to leads view
+                                    try:
+                                        from api.schema import OnLeadUpdated
+                                        OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
+                                    except Exception as ws_err:
+                                        print(f"Error broadcasting lead update: {ws_err}")
+                                else:
+                                    print(f"Payment {payment_id} was already processed.")
                 else:
                     print(f"Error calling MP Payment API: {pay_resp.status_code} - {pay_resp.text}")
                     

@@ -242,12 +242,17 @@ class ClassTypeType(DjangoObjectType):
         )
 
 class GlobalSettingsType(DjangoObjectType):
+    trial_class_price = graphene.Float()
+
+    def resolve_trial_class_price(self, info):
+        return float(self.trial_class_price) if self.trial_class_price is not None else 15000.0
+
     class Meta:
         model = GlobalSettings
         fields = (
             "id", "phone_number", "email_contact", "address",
             "opening_hours_weekdays", "opening_hours_saturdays",
-            "facebook_url", "instagram_url", "trial_class_email_template",
+            "facebook_url", "instagram_url", "trial_class_price", "trial_class_email_template",
             "whatsapp_number", "whatsapp_assigned_to", "evolution_api_url",
             "evolution_api_key", "evolution_instance_name", "whatsapp_auto_reply",
             "whatsapp_welcome_template"
@@ -1076,6 +1081,7 @@ class UpdateGlobalSettings(graphene.Mutation):
         opening_hours_saturdays = graphene.String()
         facebook_url = graphene.String()
         instagram_url = graphene.String()
+        trial_class_price = graphene.Float()
         trial_class_email_template = graphene.String()
         whatsapp_number = graphene.String()
         whatsapp_assigned_to = graphene.String()
@@ -1087,7 +1093,7 @@ class UpdateGlobalSettings(graphene.Mutation):
 
     global_settings = graphene.Field(GlobalSettingsType)
 
-    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_email_template=None, whatsapp_number=None, whatsapp_assigned_to=None, evolution_api_url=None, evolution_api_key=None, evolution_instance_name=None, whatsapp_auto_reply=None, whatsapp_welcome_template=None):
+    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_price=None, trial_class_email_template=None, whatsapp_number=None, whatsapp_assigned_to=None, evolution_api_url=None, evolution_api_key=None, evolution_instance_name=None, whatsapp_auto_reply=None, whatsapp_welcome_template=None):
         settings = GlobalSettings.get_singleton()
         if phone_number is not None: settings.phone_number = phone_number
         if email_contact is not None: settings.email_contact = email_contact
@@ -1096,6 +1102,9 @@ class UpdateGlobalSettings(graphene.Mutation):
         if opening_hours_saturdays is not None: settings.opening_hours_saturdays = opening_hours_saturdays
         if facebook_url is not None: settings.facebook_url = facebook_url
         if instagram_url is not None: settings.instagram_url = instagram_url
+        if trial_class_price is not None:
+            from decimal import Decimal
+            settings.trial_class_price = Decimal(str(int(trial_class_price)))
         if trial_class_email_template is not None: settings.trial_class_email_template = trial_class_email_template
         if whatsapp_number is not None: settings.whatsapp_number = whatsapp_number
         if whatsapp_assigned_to is not None: settings.whatsapp_assigned_to = whatsapp_assigned_to
@@ -2256,7 +2265,8 @@ class DeleteRoom(graphene.Mutation):
 
 class CreatePaymentPreference(graphene.Mutation):
     class Arguments:
-        plan_id = graphene.Int(required=True)
+        plan_id = graphene.Int(required=False)
+        is_trial_class = graphene.Boolean(required=False, default_value=False)
         name = graphene.String(required=True)
         email = graphene.String(required=True)
         phone = graphene.String(required=True)
@@ -2266,18 +2276,14 @@ class CreatePaymentPreference(graphene.Mutation):
     preference_id = graphene.String()
     init_point = graphene.String()
 
-    def mutate(self, info, plan_id, name, email, phone, back_url):
+    def mutate(self, info, name, email, phone, back_url, plan_id=None, is_trial_class=False):
         import os
         import requests
         from urllib.parse import urlparse
         try:
-            # 1. Fetch the plan
-            plan = Plan.objects.get(pk=plan_id)
-            
             # Clean and sanitize back_url to base origin
             back_url = back_url.strip().rstrip('/')
             if not back_url or not (back_url.startswith("http://") or back_url.startswith("https://")):
-                # Fallback to referer or default host
                 referer = info.context.META.get('HTTP_REFERER')
                 if referer:
                     parsed = urlparse(referer)
@@ -2291,13 +2297,13 @@ class CreatePaymentPreference(graphene.Mutation):
             print(f"DEBUG: CreatePaymentPreference clean back_url is '{back_url}'")
             
             # Mercado Pago API rejects localhost/127.0.0.1 domains when auto_return is enabled.
-            # We map local environments to the public Vercel test domain for validation.
             if "localhost" in back_url or "127.0.0.1" in back_url:
                 back_url = "https://pianoacademy-git-main-jsepulvedai1s-projects.vercel.app"
                 print(f"DEBUG: Replaced local back_url with Vercel test domain: '{back_url}'")
             
-            # 2. Create or update the Lead to track payment initiation
-            lead = Lead.objects.filter(email=email).first()
+            # 1. Create or update the Lead to track payment initiation
+            clean_phone = phone[-8:] if len(phone) >= 8 else phone
+            lead = Lead.objects.filter(email=email).first() or Lead.objects.filter(telefono__icontains=clean_phone).first()
             if not lead:
                 lead = Lead.objects.create(
                     nombre=name,
@@ -2311,7 +2317,21 @@ class CreatePaymentPreference(graphene.Mutation):
                 lead.telefono = phone
                 lead.save()
 
-            log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de plan {plan.name} para lead: {name} (Email: {email})")
+            # 2. Determine if paying for Trial Class or regular Plan
+            is_trial = is_trial_class or (plan_id is None) or (plan_id == 0)
+            if is_trial:
+                gs = GlobalSettings.get_singleton()
+                trial_price = float(gs.trial_class_price or 15000)
+                item_title = "Clase Inicial - Academia Détaché"
+                unit_price = trial_price
+                ext_ref = f"lead_id:{lead.id}|plan_id:trial"
+                log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de Clase Inicial (${trial_price:.0f}) para lead: {name} (Email: {email})")
+            else:
+                plan = Plan.objects.get(pk=plan_id)
+                item_title = f"Plan {plan.name} - Détaché"
+                unit_price = float(plan.price)
+                ext_ref = f"lead_id:{lead.id}|plan_id:{plan.id}"
+                log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de plan {plan.name} para lead: {name} (Email: {email})")
 
             # 3. Request preference from Mercado Pago
             token = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "TEST-4651592514397603-071517-68bc59d1e7da5ac1c14335ee790d8a44-2375919242")
@@ -2323,9 +2343,9 @@ class CreatePaymentPreference(graphene.Mutation):
             preference_data = {
                 "items": [
                     {
-                        "title": f"Plan {plan.name} - Détaché",
+                        "title": item_title,
                         "quantity": 1,
-                        "unit_price": float(plan.price),
+                        "unit_price": unit_price,
                         "currency_id": "CLP"
                     }
                 ],
@@ -2333,7 +2353,7 @@ class CreatePaymentPreference(graphene.Mutation):
                     "name": name,
                     "email": email,
                     "phone": {
-                        "number": phone.replace("+56", "")
+                        "number": phone.replace("+56", "").replace("+", "").strip()
                     }
                 },
                 "back_urls": {
@@ -2342,7 +2362,7 @@ class CreatePaymentPreference(graphene.Mutation):
                     "failure": f"{back_url}/checkout/failure"
                 },
                 "auto_return": "approved",
-                "external_reference": f"lead_id:{lead.id}|plan_id:{plan.id}"
+                "external_reference": ext_ref
             }
             
             notification_url = info.context.build_absolute_uri('/api/mercadopago/webhook/')

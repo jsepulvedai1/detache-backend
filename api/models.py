@@ -563,6 +563,7 @@ class GlobalSettings(models.Model):
     opening_hours_saturdays = models.CharField(max_length=100, default='10:00 - 14:00')
     facebook_url = models.CharField(max_length=255, default='https://facebook.com')
     instagram_url = models.CharField(max_length=255, default='https://instagram.com/academia.detache')
+    trial_class_price = models.DecimalField(max_digits=10, decimal_places=0, default=15000, help_text="Monto para link de pago de clase inicial / prueba")
     trial_class_email_template = models.TextField(
         default='Hola {nombre},\n\nHemos recibido tu pre-reserva de Clase de Prueba con {profesor} para el {fecha} a las {hora}.\n\nPor favor, ten en cuenta que para confirmar tu cupo debes realizar el pago antes de las 20:00 hrs de hoy. De lo contrario, el horario quedará liberado automáticamente.\n\nSaludos,\nAcademia Détaché'
     )
