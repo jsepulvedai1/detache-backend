@@ -230,6 +230,8 @@ class Query(graphene.ObjectType):
     hello = graphene.String(default_value="Hello, this is the Detache backend with GraphQL!")
     
     global_settings = graphene.Field(GlobalSettingsType)
+    whatsapp_qr_code = graphene.String()
+    whatsapp_connection_status = graphene.String()
     all_admin_accounts = graphene.List(UserType)
     all_audit_logs = graphene.List(AuditLogType)
     me = graphene.Field(UserType)
@@ -370,6 +372,34 @@ class Query(graphene.ObjectType):
 
     def resolve_global_settings(self, info):
         return GlobalSettings.get_singleton()
+
+    def resolve_whatsapp_qr_code(self, info):
+        import requests
+        from .whatsapp import get_evolution_config
+        api_url, api_key, instance_name = get_evolution_config()
+        try:
+            res = requests.get(f"{api_url}/instance/connect/{instance_name}", headers={'apikey': api_key}, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                return data.get('base64') or data.get('code')
+        except Exception as e:
+            print("Error resolving whatsapp_qr_code:", e)
+        return None
+
+    def resolve_whatsapp_connection_status(self, info):
+        import requests
+        from .whatsapp import get_evolution_config
+        api_url, api_key, instance_name = get_evolution_config()
+        try:
+            res = requests.get(f"{api_url}/instance/fetchInstances", headers={'apikey': api_key}, timeout=8)
+            if res.status_code == 200:
+                instances = res.json()
+                for inst in instances:
+                    if inst.get('name') == instance_name:
+                        return inst.get('connectionStatus')
+        except Exception as e:
+            print("Error checking connection status:", e)
+        return 'offline'
 
     def resolve_all_class_types(self, info):
         return ClassType.objects.all()
