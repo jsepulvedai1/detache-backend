@@ -4,7 +4,7 @@ from .models import (
     Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson,
     Lead, LeadNote, StudentPack, Payment, AcademyTask, LandingPage, HomepageContent,
     ClassType, AboutContent, ContactContent, GlobalSettings, UserProfile, AuditLog,
-    ChatMessage, Announcement, Material, StudentPrivateNote, StudentWallMessage
+    ChatMessage, Announcement, Material, StudentPrivateNote, StudentWallMessage, Holiday
 )
 
 # ─── INLINES ──────────────────────────────────────────────────
@@ -252,5 +252,23 @@ class ContactContentAdmin(admin.ModelAdmin):
 @admin.register(GlobalSettings)
 class GlobalSettingsAdmin(admin.ModelAdmin):
     list_display = ('__str__', 'phone_number', 'email_contact', 'whatsapp_number')
+
+
+@admin.register(Holiday)
+class HolidayAdmin(admin.ModelAdmin):
+    list_display = ('date', 'name', 'is_active', 'is_custom', 'created_at')
+    list_filter = ('is_active', 'is_custom')
+    search_fields = ('name',)
+    date_hierarchy = 'date'
+    ordering = ('date',)
+    actions = ['activate_holidays', 'deactivate_holidays']
+
+    def activate_holidays(self, request, queryset):
+        queryset.update(is_active=True)
+    activate_holidays.short_description = "Activar feriados seleccionados"
+
+    def deactivate_holidays(self, request, queryset):
+        queryset.update(is_active=False)
+    deactivate_holidays.short_description = "Desactivar feriados seleccionados"
 
 

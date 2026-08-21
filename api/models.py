@@ -640,3 +640,97 @@ class Announcement(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class Holiday(models.Model):
+    date = models.DateField(unique=True)
+    name = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True, help_text="Si está activo, se bloquea el agendamiento y se marca como feriado")
+    is_custom = models.BooleanField(default=False, help_text="True si fue creado manualmente por la administración")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['date']
+        verbose_name = "Feriado / Día No Laborable"
+        verbose_name_plural = "Feriados y Días No Laborables"
+
+    def __str__(self):
+        status = "Activo" if self.is_active else "Inactivo"
+        return f"{self.date} - {self.name} ({status})"
+
+    @classmethod
+    def seed_default_chilean_holidays(cls, target_years=None):
+        import datetime
+        if target_years is None:
+            target_years = [2025, 2026, 2027]
+
+        # Official Chilean Holidays map
+        holidays_data = [
+            # 2025
+            ("2025-01-01", "Año Nuevo 🎆"),
+            ("2025-04-18", "Viernes Santo ⛪"),
+            ("2025-04-19", "Sábado Santo ⛪"),
+            ("2025-05-01", "Día Nacional del Trabajo 🛠️"),
+            ("2025-05-21", "Día de las Glorias Navales ⚓"),
+            ("2025-06-20", "Día Nacional de los Pueblos Indígenas 🌄"),
+            ("2025-06-29", "San Pedro y San Pablo 🐟"),
+            ("2025-07-16", "Día de la Virgen del Carmen 🇨🇱"),
+            ("2025-08-15", "Asunción de la Virgen 🕊️"),
+            ("2025-09-18", "Fiestas Patrias - Independencia 🇨🇱"),
+            ("2025-09-19", "Día de las Glorias del Ejército 🎖️"),
+            ("2025-10-12", "Encuentro de Dos Mundos 🌍"),
+            ("2025-10-31", "Día de las Iglesias Evangélicas ✝️"),
+            ("2025-11-01", "Día de Todos los Santos 🕯️"),
+            ("2025-12-08", "Inmaculada Concepción 🌹"),
+            ("2025-12-25", "Navidad 🎄"),
+
+            # 2026
+            ("2026-01-01", "Año Nuevo 🎆"),
+            ("2026-04-03", "Viernes Santo ⛪"),
+            ("2026-04-04", "Sábado Santo ⛪"),
+            ("2026-05-01", "Día Nacional del Trabajo 🛠️"),
+            ("2026-05-21", "Día de las Glorias Navales ⚓"),
+            ("2026-06-21", "Día Nacional de los Pueblos Indígenas 🌄"),
+            ("2026-06-29", "San Pedro y San Pablo 🐟"),
+            ("2026-07-16", "Día de la Virgen del Carmen 🇨🇱"),
+            ("2026-08-15", "Asunción de la Virgen 🕊️"),
+            ("2026-09-18", "Fiestas Patrias - Independencia 🇨🇱"),
+            ("2026-09-19", "Día de las Glorias del Ejército 🎖️"),
+            ("2026-10-12", "Encuentro de Dos Mundos 🌍"),
+            ("2026-10-31", "Día de las Iglesias Evangélicas ✝️"),
+            ("2026-11-01", "Día de Todos los Santos 🕯️"),
+            ("2026-12-08", "Inmaculada Concepción 🌹"),
+            ("2026-12-25", "Navidad 🎄"),
+
+            # 2027
+            ("2027-01-01", "Año Nuevo 🎆"),
+            ("2027-03-26", "Viernes Santo ⛪"),
+            ("2027-03-27", "Sábado Santo ⛪"),
+            ("2027-05-01", "Día Nacional del Trabajo 🛠️"),
+            ("2027-05-21", "Día de las Glorias Navales ⚓"),
+            ("2027-06-21", "Día Nacional de los Pueblos Indígenas 🌄"),
+            ("2027-06-29", "San Pedro y San Pablo 🐟"),
+            ("2027-07-16", "Día de la Virgen del Carmen 🇨🇱"),
+            ("2027-08-15", "Asunción de la Virgen 🕊️"),
+            ("2027-09-17", "Fiestas Patrias (Feriado Adicional) 🇨🇱"),
+            ("2027-09-18", "Fiestas Patrias - Independencia 🇨🇱"),
+            ("2027-09-19", "Día de las Glorias del Ejército 🎖️"),
+            ("2027-10-12", "Encuentro de Dos Mundos 🌍"),
+            ("2027-10-31", "Día de las Iglesias Evangélicas ✝️"),
+            ("2027-11-01", "Día de Todos los Santos 🕯️"),
+            ("2027-12-08", "Inmaculada Concepción 🌹"),
+            ("2027-12-25", "Navidad 🎄"),
+        ]
+
+        count = 0
+        for date_str, name in holidays_data:
+            dt = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+            if dt.year in target_years:
+                obj, created = cls.objects.get_or_create(
+                    date=dt,
+                    defaults={'name': name, 'is_active': True, 'is_custom': False}
+                )
+                if created:
+                    count += 1
+        return count
+

@@ -1,7 +1,7 @@
 import graphene
 from django.utils import timezone
 from graphene_django import DjangoObjectType
-from .models import Announcement, Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings, UserProfile, AuditLog, ChatMessage
+from .models import Announcement, Teacher, Specialty, Availability, Plan, Student, Instrument, Room, Lesson, Lead, LeadNote, StudentPack, Payment, AcademyTask, Material, StudentPrivateNote, StudentWallMessage, LandingPage, HomepageContent, ClassType, AboutContent, ContactContent, GlobalSettings, UserProfile, AuditLog, ChatMessage, Holiday
 from django.contrib.auth.models import User
 
 def log_user_action(info, action, details):
@@ -181,6 +181,11 @@ class AcademyTaskType(DjangoObjectType):
         model = AcademyTask
         fields = ("id", "title", "description", "assigned_to", "assigned_user", "priority", "status", "log", "is_completed", "due_date", "duration", "completed_at", "created_at", "updated_at")
 
+class HolidayType(DjangoObjectType):
+    class Meta:
+        model = Holiday
+        fields = ("id", "date", "name", "is_active", "is_custom", "created_at")
+
 class LandingPageType(DjangoObjectType):
     class Meta:
         model = LandingPage
@@ -309,6 +314,10 @@ class Query(graphene.ObjectType):
     all_class_types = graphene.List(ClassTypeType)
     class_type_by_id = graphene.Field(ClassTypeType, id=graphene.Int(required=True))
 
+    # Holidays / Non-working days
+    all_holidays = graphene.List(HolidayType, year=graphene.Int())
+    active_holidays = graphene.List(HolidayType, year=graphene.Int())
+
     def resolve_hello(self, info):
         return "Hello, this is the Detache backend with GraphQL!"
 
@@ -390,6 +399,28 @@ class Query(graphene.ObjectType):
 
     def resolve_global_settings(self, info):
         return GlobalSettings.get_singleton()
+
+    def resolve_all_holidays(self, info, year=None):
+        qs = Holiday.objects.all().order_by('date')
+        if year:
+            qs = qs.filter(date__year=year)
+        if not qs.exists() and Holiday.objects.count() == 0:
+            Holiday.seed_default_chilean_holidays()
+            qs = Holiday.objects.all().order_by('date')
+            if year:
+                qs = qs.filter(date__year=year)
+        return qs
+
+    def resolve_active_holidays(self, info, year=None):
+        qs = Holiday.objects.filter(is_active=True).order_by('date')
+        if year:
+            qs = qs.filter(date__year=year)
+        if not qs.exists() and Holiday.objects.count() == 0:
+            Holiday.seed_default_chilean_holidays()
+            qs = Holiday.objects.filter(is_active=True).order_by('date')
+            if year:
+                qs = qs.filter(date__year=year)
+        return qs
 
     def resolve_whatsapp_qr_code(self, info):
         import requests
@@ -715,9 +746,14 @@ class CreateTeacher(graphene.Mutation):
         address = graphene.String()
         email = graphene.String()
         specialty_ids = graphene.List(graphene.Int)
+        provisional_password = graphene.String()
 
     teacher = graphene.Field(TeacherType)
-    def mutate(self, info, name, description="", status="ACTIVE", phone_number=None, rut=None, address=None, email=None, specialty_ids=None):
+    provisional_password = graphene.String()
+    user_created = graphene.Boolean()
+    username = graphene.String()
+
+    def mutate(self, info, name, description="", status="ACTIVE", phone_number=None, rut=None, address=None, email=None, specialty_ids=None, provisional_password=None):
         teacher = Teacher.objects.create(
             name=name, 
             description=description, 
@@ -729,7 +765,76 @@ class CreateTeacher(graphene.Mutation):
         )
         if specialty_ids:
             teacher.specialties.set(specialty_ids)
-        return CreateTeacher(teacher=teacher)
+
+        assigned_user = None
+        user_created = False
+        password_used = provisional_password or "Detache2026!"
+        username_used = None
+
+        if email and email.strip():
+            clean_email = email.strip().lower()
+            username_used = clean_email
+            
+            existing_user = User.objects.filter(username=username_used).first()
+            if not existing_user:
+                existing_user = User.objects.filter(email=clean_email).first()
+
+            if existing_user:
+                assigned_user = existing_user
+                user_created = False
+            else:
+                name_parts = name.strip().split(' ', 1)
+                first_name = name_parts[0]
+                last_name = name_parts[1] if len(name_parts) > 1 else ""
+
+                assigned_user = User.objects.create_user(
+                    username=username_used,
+                    email=clean_email,
+                    password=password_used,
+                    first_name=first_name,
+                    last_name=last_name
+                )
+                user_created = True
+
+            profile, _ = UserProfile.objects.get_or_create(user=assigned_user)
+            if profile.role not in ['ADMIN', 'SUPERADMIN']:
+                profile.role = 'PROFESOR'
+                profile.allowed_sections = ["DASHBOARD", "CALENDAR", "STUDENTS", "MATERIALS"]
+                profile.save()
+
+            teacher.user = assigned_user
+            teacher.save()
+            log_user_action(info, "CREATE_TEACHER_ACCOUNT_AUTO", f"Cuenta de portal creada automáticamente para profesor: {teacher.name} (username: {username_used})")
+        elif rut and rut.strip():
+            clean_rut = rut.strip().lower().replace('.', '').replace('-', '')
+            username_used = clean_rut
+            existing_user = User.objects.filter(username=username_used).first()
+            if not existing_user:
+                name_parts = name.strip().split(' ', 1)
+                first_name = name_parts[0]
+                last_name = name_parts[1] if len(name_parts) > 1 else ""
+                assigned_user = User.objects.create_user(
+                    username=username_used,
+                    password=password_used,
+                    first_name=first_name,
+                    last_name=last_name
+                )
+                user_created = True
+                profile, _ = UserProfile.objects.get_or_create(user=assigned_user)
+                profile.role = 'PROFESOR'
+                profile.allowed_sections = ["DASHBOARD", "CALENDAR", "STUDENTS", "MATERIALS"]
+                profile.save()
+                teacher.user = assigned_user
+                teacher.save()
+                log_user_action(info, "CREATE_TEACHER_ACCOUNT_AUTO", f"Cuenta de portal creada automáticamente para profesor: {teacher.name} (username: {username_used})")
+
+        log_user_action(info, "CREATE_TEACHER", f"Creado profesor: {teacher.name} (ID: {teacher.id})")
+        return CreateTeacher(
+            teacher=teacher,
+            provisional_password=password_used if user_created else None,
+            user_created=user_created,
+            username=username_used
+        )
 
 class UpdateTeacher(graphene.Mutation):
     class Arguments:
@@ -2362,6 +2467,106 @@ class ChangeMyPassword(graphene.Mutation):
         return ChangeMyPassword(success=True)
 
 
+class CreateHoliday(graphene.Mutation):
+    class Arguments:
+        date = graphene.Date(required=True)
+        name = graphene.String(required=True)
+        is_active = graphene.Boolean(default_value=True)
+
+    holiday = graphene.Field(HolidayType)
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, date, name, is_active=True):
+        existing = Holiday.objects.filter(date=date).first()
+        if existing:
+            existing.name = name
+            existing.is_active = is_active
+            existing.save()
+            log_user_action(info, "UPDATE_HOLIDAY", f"Feriado actualizado para fecha {date}: {name}")
+            return CreateHoliday(holiday=existing, success=True)
+        holiday = Holiday.objects.create(
+            date=date,
+            name=name,
+            is_active=is_active,
+            is_custom=True
+        )
+        log_user_action(info, "CREATE_HOLIDAY", f"Feriado creado para fecha {date}: {name}")
+        return CreateHoliday(holiday=holiday, success=True)
+
+
+class UpdateHoliday(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        name = graphene.String()
+        date = graphene.Date()
+        is_active = graphene.Boolean()
+
+    holiday = graphene.Field(HolidayType)
+    success = graphene.Boolean()
+    error = graphene.String()
+
+    def mutate(self, info, id, name=None, date=None, is_active=None):
+        holiday = Holiday.objects.filter(pk=id).first()
+        if not holiday:
+            return UpdateHoliday(holiday=None, success=False, error="Feriado no encontrado.")
+        if name is not None:
+            holiday.name = name
+        if date is not None:
+            holiday.date = date
+        if is_active is not None:
+            holiday.is_active = is_active
+        holiday.save()
+        log_user_action(info, "UPDATE_HOLIDAY", f"Feriado {holiday.id} actualizado.")
+        return UpdateHoliday(holiday=holiday, success=True)
+
+
+class ToggleHoliday(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+        is_active = graphene.Boolean()
+
+    holiday = graphene.Field(HolidayType)
+    success = graphene.Boolean()
+
+    def mutate(self, info, id, is_active=None):
+        holiday = Holiday.objects.filter(pk=id).first()
+        if not holiday:
+            return ToggleHoliday(holiday=None, success=False)
+        if is_active is not None:
+            holiday.is_active = is_active
+        else:
+            holiday.is_active = not holiday.is_active
+        holiday.save()
+        log_user_action(info, "TOGGLE_HOLIDAY", f"Feriado {holiday.name} ({holiday.date}) {'activado' if holiday.is_active else 'desactivado'}")
+        return ToggleHoliday(holiday=holiday, success=True)
+
+
+class DeleteHoliday(graphene.Mutation):
+    class Arguments:
+        id = graphene.Int(required=True)
+
+    success = graphene.Boolean()
+
+    def mutate(self, info, id):
+        Holiday.objects.filter(pk=id).delete()
+        log_user_action(info, "DELETE_HOLIDAY", f"Feriado ID {id} eliminado.")
+        return DeleteHoliday(success=True)
+
+
+class SeedDefaultHolidays(graphene.Mutation):
+    class Arguments:
+        years = graphene.List(graphene.Int)
+
+    count = graphene.Int()
+    success = graphene.Boolean()
+
+    def mutate(self, info, years=None):
+        count = Holiday.seed_default_chilean_holidays(target_years=years)
+        log_user_action(info, "SEED_HOLIDAYS", f"Se cargaron {count} feriados chilenos por defecto.")
+        return SeedDefaultHolidays(count=count, success=True)
+
+
 class Mutation(graphene.ObjectType):
     create_announcement = CreateAnnouncement.Field()
     update_announcement = UpdateAnnouncement.Field()
@@ -2421,6 +2626,11 @@ class Mutation(graphene.ObjectType):
     create_teacher_account = CreateTeacherAccount.Field()
     reset_portal_password = ResetPortalPassword.Field()
     change_my_password = ChangeMyPassword.Field()
+    create_holiday = CreateHoliday.Field()
+    update_holiday = UpdateHoliday.Field()
+    toggle_holiday = ToggleHoliday.Field()
+    delete_holiday = DeleteHoliday.Field()
+    seed_default_holidays = SeedDefaultHolidays.Field()
 
 
 import channels_graphql_ws
