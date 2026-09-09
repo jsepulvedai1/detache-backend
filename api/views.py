@@ -251,7 +251,12 @@ class MediaUploadView(View):
             # Save under media/{folder}/
             saved_path = default_storage.save(f"{folder}/{filename}", ContentFile(upload_file.read()))
             relative_url = default_storage.url(saved_path)
+            if not relative_url.startswith('/'):
+                relative_url = f"/{relative_url}"
+            
             full_url = request.build_absolute_uri(relative_url)
+            if request.META.get('HTTP_X_FORWARDED_PROTO') == 'https' and full_url.startswith('http://'):
+                full_url = full_url.replace('http://', 'https://', 1)
 
             return JsonResponse({
                 "status": "SUCCESS", 
