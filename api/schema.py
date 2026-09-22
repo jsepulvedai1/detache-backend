@@ -959,6 +959,10 @@ class CreateAvailability(graphene.Mutation):
     availability = graphene.Field(AvailabilityType)
 
     def mutate(self, info, teacher_id, day, start_time, end_time):
+        user = getattr(info.context, 'user', None)
+        if user and user.is_authenticated and not (user.is_staff or user.is_superuser):
+            raise Exception("No tienes permisos para modificar horarios de disponibilidad. Esta acción solo puede ser gestionada por gerencia o administración.")
+
         teacher = Teacher.objects.get(pk=teacher_id)
         availability = Availability.objects.create(
             teacher=teacher,
@@ -966,6 +970,7 @@ class CreateAvailability(graphene.Mutation):
             start_time=start_time,
             end_time=end_time
         )
+        log_user_action(info, "CREATE_AVAILABILITY", f"Horario creado para profesor {teacher.name}: {day} {start_time}-{end_time}")
         return CreateAvailability(availability=availability)
 
 class UpdateAvailability(graphene.Mutation):
@@ -978,6 +983,10 @@ class UpdateAvailability(graphene.Mutation):
     availability = graphene.Field(AvailabilityType)
 
     def mutate(self, info, id, day=None, start_time=None, end_time=None):
+        user = getattr(info.context, 'user', None)
+        if user and user.is_authenticated and not (user.is_staff or user.is_superuser):
+            raise Exception("No tienes permisos para modificar horarios de disponibilidad. Esta acción solo puede ser gestionada por gerencia o administración.")
+
         availability = Availability.objects.get(pk=id)
         if day:
             availability.day = day
@@ -986,6 +995,7 @@ class UpdateAvailability(graphene.Mutation):
         if end_time:
             availability.end_time = end_time
         availability.save()
+        log_user_action(info, "UPDATE_AVAILABILITY", f"Horario actualizado para profesor {availability.teacher.name} (id {id}): {availability.day} {availability.start_time}-{availability.end_time}")
         return UpdateAvailability(availability=availability)
 
 class DeleteAvailability(graphene.Mutation):
@@ -995,7 +1005,16 @@ class DeleteAvailability(graphene.Mutation):
     success = graphene.Boolean()
 
     def mutate(self, info, id):
-        Availability.objects.filter(pk=id).delete()
+        user = getattr(info.context, 'user', None)
+        if user and user.is_authenticated and not (user.is_staff or user.is_superuser):
+            raise Exception("No tienes permisos para modificar horarios de disponibilidad. Esta acción solo puede ser gestionada por gerencia o administración.")
+
+        av = Availability.objects.filter(pk=id).first()
+        if av:
+            teacher_name = av.teacher.name
+            av_info = f"{av.day} {av.start_time}-{av.end_time}"
+            av.delete()
+            log_user_action(info, "DELETE_AVAILABILITY", f"Horario eliminado para profesor {teacher_name}: {av_info}")
         return DeleteAvailability(success=True)
 
 class CreateStudent(graphene.Mutation):
