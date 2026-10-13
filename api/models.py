@@ -117,6 +117,10 @@ class Lead(models.Model):
         ('PIANO_NINOS', 'Piano Niños'),
         ('PIANO_ADULTOS', 'Piano Adultos'),
         ('CANTO', 'Canto'),
+        ('VIOLIN', 'Violín'),
+        ('GUITARRA', 'Guitarra'),
+        ('BATERIA', 'Batería'),
+        ('CONTRABAJO', 'Contrabajo / Bajo'),
         ('CLASE_GRUPAL', 'Clase Grupal'),
         ('CLASE_PRUEBA', 'Clase de Prueba'),
     ]
@@ -139,6 +143,7 @@ class Lead(models.Model):
     telefono = models.CharField(max_length=20)
     email = models.EmailField(blank=True, null=True)
     edad = models.PositiveIntegerField(blank=True, null=True)
+    apoderado_nombre = models.CharField(max_length=255, blank=True, null=True, help_text="Nombre del apoderado si el alumno es menor de edad")
     servicio = models.CharField(max_length=50, choices=SERVICE_CHOICES, default='CLASE_PRUEBA')
     fuente = models.CharField(max_length=50, choices=SOURCE_CHOICES, default='WEB')
     estado = models.CharField(max_length=50, choices=STATUS_CHOICES, default='NUEVO')
@@ -187,6 +192,7 @@ class Teacher(models.Model):
     rut = models.CharField(max_length=20, blank=True, null=True)
     address = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
+    birth_date = models.DateField(blank=True, null=True, help_text="Fecha de nacimiento para cumpleaños")
     user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='teacher_profile')
 
     def __str__(self):
@@ -235,6 +241,7 @@ class Student(models.Model):
     
     photo = models.ImageField(upload_to='students/', blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
+    return_date = models.DateField(blank=True, null=True, help_text="Fecha de retorno si el plan está congelado (ON_HOLD)")
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     
     level = models.CharField(max_length=50, choices=LEVEL_CHOICES, default='BEGINNER')
@@ -301,6 +308,7 @@ class Lesson(models.Model):
     
     # Soporte para pre-reservas
     is_pre_reservation = models.BooleanField(default=False)
+    notes = models.TextField(blank=True, null=True, help_text="Razón de ausencia o nota de la clase")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -309,7 +317,13 @@ class Lesson(models.Model):
 
 # ─── BILLING & PACKS ───
 class Plan(models.Model):
+    CATEGORY_CHOICES = [
+        ('INDIVIDUAL_REGULAR', 'Planes individuales regulares'),
+        ('INDIVIDUAL_PREFERENTIAL', 'Planes individuales con valor preferencial (10:00 a 13:00 hrs)'),
+        ('GROUP', 'Planes de clases grupales'),
+    ]
     name = models.CharField(max_length=255)
+    category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='INDIVIDUAL_REGULAR', help_text="Categoría o sección del plan")
     price = models.DecimalField(max_digits=10, decimal_places=2)
     duration = models.PositiveIntegerField(help_text="Duration in months")
     classes_count = models.PositiveIntegerField(default=4, help_text="Number of classes included in this pack (e.g., 4, 12, 24)")
@@ -329,9 +343,31 @@ class StudentPack(models.Model):
     is_active = models.BooleanField(default=True)
 
     def save(self, *args, **kwargs):
-        if not self.pk: # Only on creation
+        is_new = not self.pk
+        if is_new: # Only on creation
             self.total_classes = self.plan.classes_count
             self.remaining_classes = self.plan.classes_count
+            
+            # Set expiration_date based on plan duration (in months)
+            from dateutil.relativedelta import relativedelta
+            if not self.expiration_date and self.plan.duration:
+                self.expiration_date = self.purchase_date + relativedelta(months=self.plan.duration)
+            
+            # Consolidate previous active packs
+            existing_active_packs = list(StudentPack.objects.filter(student=self.student, is_active=True))
+            rolled_over = sum([p.remaining_classes for p in existing_active_packs])
+            if rolled_over > 0:
+                self.total_classes += rolled_over
+                self.remaining_classes += rolled_over
+                
+            super().save(*args, **kwargs)
+            
+            if existing_active_packs:
+                from .models import Payment
+                Payment.objects.filter(pack__in=existing_active_packs).update(pack=self)
+                StudentPack.objects.filter(id__in=[p.id for p in existing_active_packs]).delete()
+            return
+                
         super().save(*args, **kwargs)
 
     def __str__(self):

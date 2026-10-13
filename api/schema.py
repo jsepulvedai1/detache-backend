@@ -71,7 +71,7 @@ class AnnouncementType(DjangoObjectType):
 class TeacherType(DjangoObjectType):
     class Meta:
         model = Teacher
-        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number", "rut", "address", "email", "user")
+        fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number", "rut", "address", "email", "birth_date", "user")
 
     def resolve_photo(self, info):
         if self.photo:
@@ -93,7 +93,7 @@ class StudentType(DjangoObjectType):
 
     class Meta:
         model = Student
-        fields = ("id", "name", "email", "photo", "status", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "assigned_teachers", "private_notes", "wall_messages", "packs", "user")
+        fields = ("id", "name", "email", "photo", "status", "return_date", "phone_number", "rut", "birth_date", "guardian_name", "guardian_phone", "level", "start_date", "primary_instrument", "assigned_teachers", "private_notes", "wall_messages", "packs", "user")
 
     def resolve_status(self, info):
         return str(self.status) if self.status else "ACTIVE"
@@ -137,14 +137,15 @@ class LessonType(DjangoObjectType):
 
     class Meta:
         model = Lesson
-        fields = ("id", "teacher", "student", "lead", "room", "date", "start_time", "end_time", "status", "lesson_type", "is_pre_reservation")
+        fields = ("id", "teacher", "student", "lead", "room", "date", "start_time", "end_time", "status", "lesson_type", "is_pre_reservation", "notes")
 
 class PlanType(DjangoObjectType):
     class Meta:
         model = Plan
-        fields = ("id", "name", "price", "duration", "classes_count", "is_featured", "benefits")
+        fields = ("id", "name", "category", "price", "duration", "classes_count", "is_featured", "benefits")
     
     price = graphene.String()
+    category = graphene.String()
 
     def resolve_price(self, info):
         return str(self.price)
@@ -156,7 +157,7 @@ class LeadType(DjangoObjectType):
 
     class Meta:
         model = Lead
-        fields = ("id", "nombre", "telefono", "email", "edad", "servicio", "fuente", "estado", "asignado_a", "fecha_ingreso", "fecha_ultimo_contacto", "notas", "lessons")
+        fields = ("id", "nombre", "telefono", "email", "edad", "apoderado_nombre", "servicio", "fuente", "estado", "asignado_a", "fecha_ingreso", "fecha_ultimo_contacto", "notas", "lessons")
 
     def resolve_fuente(self, info):
         return str(self.fuente) if self.fuente else "WEB"
@@ -587,6 +588,8 @@ class CreatePreReservation(graphene.Mutation):
         nombre = graphene.String(required=True)
         telefono = graphene.String(required=True)
         email = graphene.String()
+        edad = graphene.Int()
+        apoderado_nombre = graphene.String()
         servicio = graphene.String()
         profesor_nombre = graphene.String(required=True)
         fecha = graphene.Date(required=True)
@@ -598,7 +601,7 @@ class CreatePreReservation(graphene.Mutation):
     success = graphene.Boolean()
     lesson = graphene.Field(LessonType)
 
-    def mutate(self, info, nombre, telefono, profesor_nombre, fecha, hora, email=None, servicio='CLASE_PRUEBA', sala=None, modalidad='PRESENCIAL', notas=None):
+    def mutate(self, info, nombre, telefono, profesor_nombre, fecha, hora, email=None, edad=None, apoderado_nombre=None, servicio='CLASE_PRUEBA', sala=None, modalidad='PRESENCIAL', notas=None):
         from datetime import datetime, timedelta, date, time
         if isinstance(hora, str):
             parts = [int(p) for p in hora.split(':')]
@@ -618,6 +621,8 @@ class CreatePreReservation(graphene.Mutation):
             nombre=nombre,
             telefono=telefono,
             email=email,
+            edad=edad,
+            apoderado_nombre=apoderado_nombre,
             servicio=clean_service,
             fuente='WEB',
             estado='PRE_RESERVA'
@@ -805,6 +810,7 @@ class CreateTeacher(graphene.Mutation):
         rut = graphene.String()
         address = graphene.String()
         email = graphene.String()
+        birth_date = graphene.Date()
         specialty_ids = graphene.List(graphene.Int)
         provisional_password = graphene.String()
 
@@ -813,7 +819,7 @@ class CreateTeacher(graphene.Mutation):
     user_created = graphene.Boolean()
     username = graphene.String()
 
-    def mutate(self, info, name, description="", status="ACTIVE", phone_number=None, rut=None, address=None, email=None, specialty_ids=None, provisional_password=None):
+    def mutate(self, info, name, description="", status="ACTIVE", phone_number=None, rut=None, address=None, email=None, birth_date=None, specialty_ids=None, provisional_password=None):
         teacher = Teacher.objects.create(
             name=name, 
             description=description, 
@@ -821,7 +827,8 @@ class CreateTeacher(graphene.Mutation):
             phone_number=phone_number,
             rut=rut,
             address=address,
-            email=email
+            email=email,
+            birth_date=birth_date
         )
         if specialty_ids:
             teacher.specialties.set(specialty_ids)
@@ -906,11 +913,12 @@ class UpdateTeacher(graphene.Mutation):
         rut = graphene.String()
         address = graphene.String()
         email = graphene.String()
+        birth_date = graphene.Date()
         specialty_ids = graphene.List(graphene.Int)
 
     teacher = graphene.Field(TeacherType)
 
-    def mutate(self, info, id, name=None, description=None, status=None, phone_number=None, rut=None, address=None, email=None, specialty_ids=None):
+    def mutate(self, info, id, name=None, description=None, status=None, phone_number=None, rut=None, address=None, email=None, birth_date=None, specialty_ids=None):
         try:
             teacher = Teacher.objects.get(pk=id)
             if name is not None: teacher.name = name
@@ -920,12 +928,37 @@ class UpdateTeacher(graphene.Mutation):
             if rut is not None: teacher.rut = rut
             if address is not None: teacher.address = address
             if email is not None: teacher.email = email
+            if birth_date is not None: teacher.birth_date = birth_date
             if specialty_ids is not None:
                 teacher.specialties.set(specialty_ids)
             teacher.save()
             return UpdateTeacher(teacher=teacher)
         except Teacher.DoesNotExist:
             return UpdateTeacher(teacher=None)
+
+class UpdateMyTeacherProfile(graphene.Mutation):
+    class Arguments:
+        phone_number = graphene.String()
+        email = graphene.String()
+        birth_date = graphene.Date()
+        description = graphene.String()
+
+    teacher = graphene.Field(TeacherType)
+    success = graphene.Boolean()
+
+    def mutate(self, info, phone_number=None, email=None, birth_date=None, description=None):
+        user = getattr(info.context, 'user', None)
+        if not user or not user.is_authenticated:
+            raise Exception("No autenticado.")
+        teacher = getattr(user, 'teacher_profile', None)
+        if not teacher:
+            raise Exception("No tienes un perfil de profesor vinculado.")
+        if phone_number is not None: teacher.phone_number = phone_number
+        if email is not None: teacher.email = email
+        if birth_date is not None: teacher.birth_date = birth_date
+        if description is not None: teacher.description = description
+        teacher.save()
+        return UpdateMyTeacherProfile(teacher=teacher, success=True)
 
 class DeleteTeacher(graphene.Mutation):
     class Arguments:
@@ -1062,6 +1095,7 @@ class UpdateStudent(graphene.Mutation):
         guardian_name = graphene.String()
         guardian_phone = graphene.String()
         status = graphene.String()
+        return_date = graphene.Date()
         phone_number = graphene.String()
         level = graphene.String()
         primary_instrument_id = graphene.Int()
@@ -1069,7 +1103,7 @@ class UpdateStudent(graphene.Mutation):
 
     student = graphene.Field(StudentType)
 
-    def mutate(self, info, id, name=None, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, phone_number=None, level=None, primary_instrument_id=None, assigned_teacher_ids=None):
+    def mutate(self, info, id, name=None, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, return_date=None, phone_number=None, level=None, primary_instrument_id=None, assigned_teacher_ids=None):
         try:
             student = Student.objects.get(pk=id)
             if name is not None: student.name = name
@@ -1079,6 +1113,7 @@ class UpdateStudent(graphene.Mutation):
             if guardian_name is not None: student.guardian_name = guardian_name
             if guardian_phone is not None: student.guardian_phone = guardian_phone
             if status is not None: student.status = status
+            if return_date is not None: student.return_date = return_date
             if phone_number is not None: student.phone_number = phone_number
             if level is not None: student.level = level
             if primary_instrument_id is not None:
@@ -1201,12 +1236,13 @@ class CreateLead(graphene.Mutation):
         telefono = graphene.String(required=True)
         email = graphene.String()
         edad = graphene.Int()
+        apoderado_nombre = graphene.String()
         servicio = graphene.String()
         fuente = graphene.String()
 
     lead = graphene.Field(LeadType)
 
-    def mutate(self, info, nombre, telefono, email=None, edad=None, servicio='CLASE_PRUEBA', fuente='WEB'):
+    def mutate(self, info, nombre, telefono, email=None, edad=None, apoderado_nombre=None, servicio='CLASE_PRUEBA', fuente='WEB'):
         parsed_res = None
         if email and "|" in email:
             try:
@@ -1244,6 +1280,7 @@ class CreateLead(graphene.Mutation):
             telefono=telefono,
             email=lead_email,
             edad=edad,
+            apoderado_nombre=apoderado_nombre,
             servicio=servicio,
             fuente=fuente
         )
@@ -1424,16 +1461,23 @@ class ManualDeductClass(graphene.Mutation):
 class UpdateLessonStatus(graphene.Mutation):
     class Arguments:
         lesson_id = graphene.Int(required=True)
-        status = graphene.String(required=True) # PENDING, COMPLETED, CANCELLED
+        status = graphene.String(required=True) # PENDING, COMPLETED, CANCELLED, EXCUSED
+        notes = graphene.String(required=False)
+        reschedule_date = graphene.Date(required=False)
+        reschedule_start_time = graphene.Time(required=False)
+        reschedule_end_time = graphene.Time(required=False)
 
     success = graphene.Boolean()
     lesson = graphene.Field(LessonType)
+    rescheduled_lesson = graphene.Field(LessonType)
 
-    def mutate(self, info, lesson_id, status):
+    def mutate(self, info, lesson_id, status, notes=None, reschedule_date=None, reschedule_start_time=None, reschedule_end_time=None):
         try:
             lesson = Lesson.objects.get(pk=lesson_id)
             old_status = lesson.status
             lesson.status = status
+            if notes is not None:
+                lesson.notes = notes
             lesson.save()
 
             # Auto-deduct class if status changed to COMPLETED or ABSENT
@@ -1458,9 +1502,24 @@ class UpdateLessonStatus(graphene.Mutation):
                     active_pack.remaining_classes += 1
                     active_pack.save()
                     
-            return UpdateLessonStatus(success=True, lesson=lesson)
+            rescheduled_lesson_obj = None
+            if status == 'EXCUSED' and reschedule_date and reschedule_start_time and reschedule_end_time:
+                rescheduled_lesson_obj = Lesson.objects.create(
+                    teacher=lesson.teacher,
+                    student=lesson.student,
+                    lead=lesson.lead,
+                    room=lesson.room,
+                    date=reschedule_date,
+                    start_time=reschedule_start_time,
+                    end_time=reschedule_end_time,
+                    status='PENDING',
+                    lesson_type=lesson.lesson_type,
+                    is_pre_reservation=lesson.is_pre_reservation
+                )
+                    
+            return UpdateLessonStatus(success=True, lesson=lesson, rescheduled_lesson=rescheduled_lesson_obj)
         except Lesson.DoesNotExist:
-            return UpdateLessonStatus(success=False, lesson=None)
+            return UpdateLessonStatus(success=False, lesson=None, rescheduled_lesson=None)
 
 class UpdateLeadStatus(graphene.Mutation):
     class Arguments:
@@ -1620,6 +1679,7 @@ class DeleteLead(graphene.Mutation):
 class CreatePlan(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
+        category = graphene.String()
         price = graphene.Float(required=True)
         duration = graphene.Int(required=True)
         classes_count = graphene.Int(required=True)
@@ -1628,11 +1688,12 @@ class CreatePlan(graphene.Mutation):
 
     plan = graphene.Field(PlanType)
 
-    def mutate(self, info, name, price, duration, classes_count, is_featured=False, benefits=None):
+    def mutate(self, info, name, price, duration, classes_count, category='INDIVIDUAL_REGULAR', is_featured=False, benefits=None):
         if benefits is None:
             benefits = []
         plan = Plan.objects.create(
             name=name,
+            category=category or 'INDIVIDUAL_REGULAR',
             price=price,
             duration=duration,
             classes_count=classes_count,
@@ -1659,6 +1720,7 @@ class UpdatePlan(graphene.Mutation):
     class Arguments:
         id = graphene.Int(required=True)
         name = graphene.String()
+        category = graphene.String()
         price = graphene.Float()
         duration = graphene.Int()
         classes_count = graphene.Int()
@@ -1667,10 +1729,11 @@ class UpdatePlan(graphene.Mutation):
 
     plan = graphene.Field(PlanType)
 
-    def mutate(self, info, id, name=None, price=None, duration=None, classes_count=None, is_featured=None, benefits=None):
+    def mutate(self, info, id, name=None, category=None, price=None, duration=None, classes_count=None, is_featured=None, benefits=None):
         try:
             plan = Plan.objects.get(pk=id)
             if name is not None: plan.name = name
+            if category is not None: plan.category = category
             if price is not None: plan.price = price
             if duration is not None: plan.duration = duration
             if classes_count is not None: plan.classes_count = classes_count
@@ -2458,7 +2521,11 @@ class LoginUser(graphene.Mutation):
                 portal_type = 'ADMIN'
             
             # Temporary context mock to log action under this user
-            info.context.user = user
+            if hasattr(info, 'context') and info.context is not None:
+                try:
+                    info.context.user = user
+                except Exception:
+                    pass
             log_user_action(info, "LOGIN", f"Inicio de sesión exitoso para usuario: {username} ({portal_type})")
             
             return LoginUser(success=True, token=token, user=user, portal_type=portal_type)
@@ -2767,6 +2834,7 @@ class Mutation(graphene.ObjectType):
     update_plan = UpdatePlan.Field()
     delete_plan = DeletePlan.Field()
     update_teacher = UpdateTeacher.Field()
+    update_my_teacher_profile = UpdateMyTeacherProfile.Field()
     delete_teacher = DeleteTeacher.Field()
     create_class_type = CreateClassType.Field()
     update_class_type = UpdateClassType.Field()
