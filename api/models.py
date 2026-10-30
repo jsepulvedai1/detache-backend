@@ -142,10 +142,12 @@ class Lead(models.Model):
         ('OTRO', 'Otro'),
     ]
     STATUS_CHOICES = [
+        ('SOLICITUD', 'Solicitud Recibida'),
+        ('PRE_RESERVA', 'Pre-Reserva (Con Adelanto)'),
+        ('RESERVA_CONFIRMADA', 'Reserva Confirmada (Pago Total)'),
+        ('CONTACTADO', 'Contactado / En Seguimiento'),
+        ('CONCRETADO', 'Venta Concretada / Alumno'),
         ('NUEVO', 'Nuevo Lead'),
-        ('CONTACTADO', 'Contactado'),
-        ('PRE_RESERVA', 'Pre-Reserva'),
-        ('RESERVA_CONFIRMADA', 'Reserva Confirmada'),
     ]
 
     nombre = models.CharField(max_length=255)
@@ -155,7 +157,7 @@ class Lead(models.Model):
     apoderado_nombre = models.CharField(max_length=255, blank=True, null=True, help_text="Nombre del apoderado si el alumno es menor de edad")
     servicio = models.CharField(max_length=50, choices=SERVICE_CHOICES, default='CLASE_PRUEBA')
     fuente = models.CharField(max_length=50, choices=SOURCE_CHOICES, default='WEB')
-    estado = models.CharField(max_length=50, choices=STATUS_CHOICES, default='PRE_RESERVA')
+    estado = models.CharField(max_length=50, choices=STATUS_CHOICES, default='SOLICITUD')
     asignado_a = models.CharField(max_length=100, blank=True, null=True, default='Recepción')
     fecha_ingreso = models.DateTimeField(auto_now_add=True)
     fecha_ultimo_contacto = models.DateTimeField(auto_now=True)
@@ -608,12 +610,71 @@ class GlobalSettings(models.Model):
     opening_hours_saturdays = models.CharField(max_length=100, default='10:00 - 14:00')
     facebook_url = models.CharField(max_length=255, default='https://facebook.com')
     instagram_url = models.CharField(max_length=255, default='https://instagram.com/academia.detache')
-    trial_class_price = models.DecimalField(max_digits=10, decimal_places=0, default=15000, help_text="Monto para link de pago de clase inicial / prueba")
-    trial_class_email_template = models.TextField(
-        default='Hola {nombre},\n\nHemos recibido tu pre-reserva de Clase de Prueba con {profesor} para el {fecha} a las {hora}.\n\nPor favor, ten en cuenta que para confirmar tu cupo debes realizar el pago antes de las 20:00 hrs de hoy. De lo contrario, el horario quedará liberado automáticamente.\n\nSaludos,\nAcademia Détaché'
+    trial_class_price = models.DecimalField(max_digits=10, decimal_places=0, default=16000, help_text="Monto total oficial de la clase de prueba")
+    trial_class_deposit_amount = models.DecimalField(max_digits=10, decimal_places=0, default=8000, help_text="Monto de adelanto/abono requerido para pre-reservar")
+    trial_class_deposit_label = models.CharField(
+        max_length=120,
+        default='Adelanto para Pre-Reserva',
+        blank=True,
+        help_text="Etiqueta para el monto de adelanto"
+    )
+    trial_class_balance_footer = models.CharField(
+        max_length=150,
+        default='Saldo restante a pagar el día de la clase en recepción',
+        blank=True,
+        help_text="Texto explicativo del saldo restante"
+    )
+    trial_class_badge = models.CharField(
+        max_length=120,
+        default='Clase de Prueba • 30 Minutos',
+        blank=True,
+        help_text="Texto del badge principal del ticket"
+    )
+    trial_class_badge_requirement = models.CharField(
+        max_length=150,
+        default='Requiere Pago Anticipado (${price} CLP)',
+        blank=True,
+        help_text="Texto del badge de requerimiento. Soporta variable ${price}"
+    )
+    trial_class_title = models.CharField(
+        max_length=255,
+        default='¿En qué consiste la Clase de Prueba?',
+        blank=True,
+        help_text="Título principal del ticket de Clase de Prueba"
     )
     trial_class_description = models.TextField(
         default='Sesión individual de 30 minutos donde evaluamos tu nivel o potencial inicial, resolvemos tus dudas metodológicas y trazamos un plan de estudio personalizado en tu instrumento.',
+        blank=True
+    )
+    trial_class_features = models.TextField(
+        default='30 minutos de duración\nProfesor especialista según instrumento\nReserva con mínimo 24 hrs de anticipación',
+        blank=True,
+        help_text="Viñetas con check del ticket (un ítem por línea)"
+    )
+    trial_class_price_label = models.CharField(
+        max_length=100,
+        default='Valor Clase de Prueba',
+        blank=True,
+        help_text="Etiqueta superior en el recuadro de precio"
+    )
+    trial_class_price_footer = models.CharField(
+        max_length=150,
+        default='Pago online o transferencia',
+        blank=True,
+        help_text="Subtexto inferior en el recuadro de precio"
+    )
+    trial_class_payment_required_notice = models.TextField(
+        default='Requisito Indispensable: Pago Anticipado de Clase de Prueba (${price} CLP)',
+        blank=True,
+        help_text="Aviso en el bloque de pago del agendamiento"
+    )
+    trial_class_booking_notice = models.TextField(
+        default='IMPORTANTE: Tu clase de prueba aún NO está agendada definitivamente. Ninguna hora queda confirmada sin pago previo (${price} CLP) antes de las 20:00 hrs.',
+        blank=True,
+        help_text="Aviso en el voucher/ticket de pre-reserva (Paso 6)"
+    )
+    trial_class_email_template = models.TextField(
+        default='Hola {nombre},\n\nHemos recibido tu pre-reserva de Clase de Prueba con {profesor} para el {fecha} a las {hora}.\n\nPor favor, ten en cuenta que para confirmar tu cupo debes realizar el pago antes de las 20:00 hrs de hoy. De lo contrario, el horario quedará liberado automáticamente.\n\nSaludos,\nAcademia Détaché',
         blank=True
     )
     sede_salas_info = models.TextField(

@@ -280,17 +280,26 @@ class ClassTypeType(DjangoObjectType):
 
 class GlobalSettingsType(DjangoObjectType):
     trial_class_price = graphene.Float()
+    trial_class_deposit_amount = graphene.Float()
 
     def resolve_trial_class_price(self, info):
-        return float(self.trial_class_price) if self.trial_class_price is not None else 15000.0
+        return float(self.trial_class_price) if self.trial_class_price is not None else 16000.0
+
+    def resolve_trial_class_deposit_amount(self, info):
+        return float(self.trial_class_deposit_amount) if self.trial_class_deposit_amount is not None else 8000.0
 
     class Meta:
         model = GlobalSettings
         fields = (
             "id", "phone_number", "email_contact", "address",
             "opening_hours_weekdays", "opening_hours_saturdays",
-            "facebook_url", "instagram_url", "trial_class_price", "trial_class_email_template",
-            "trial_class_description", "sede_salas_info", "bank_transfer_details", "terms_and_conditions",
+            "facebook_url", "instagram_url", "trial_class_price", "trial_class_deposit_amount",
+            "trial_class_deposit_label", "trial_class_balance_footer",
+            "trial_class_email_template",
+            "trial_class_badge", "trial_class_badge_requirement", "trial_class_title",
+            "trial_class_description", "trial_class_features", "trial_class_price_label",
+            "trial_class_price_footer", "trial_class_booking_notice", "trial_class_payment_required_notice",
+            "sede_salas_info", "bank_transfer_details", "terms_and_conditions",
             "whatsapp_number", "whatsapp_assigned_to", "evolution_api_url",
             "evolution_api_key", "evolution_instance_name", "whatsapp_auto_reply",
             "whatsapp_welcome_template"
@@ -662,7 +671,7 @@ class CreatePreReservation(graphene.Mutation):
             apoderado_nombre=apoderado_nombre,
             servicio=clean_service,
             fuente='WEB',
-            estado='PRE_RESERVA'
+            estado='SOLICITUD'
         )
         if notas:
             LeadNote.objects.create(lead=lead, texto=notas, autor='Reserva Web')
@@ -1181,8 +1190,19 @@ class UpdateGlobalSettings(graphene.Mutation):
         facebook_url = graphene.String()
         instagram_url = graphene.String()
         trial_class_price = graphene.Float()
-        trial_class_email_template = graphene.String()
+        trial_class_deposit_amount = graphene.Float()
+        trial_class_deposit_label = graphene.String()
+        trial_class_balance_footer = graphene.String()
+        trial_class_badge = graphene.String()
+        trial_class_badge_requirement = graphene.String()
+        trial_class_title = graphene.String()
         trial_class_description = graphene.String()
+        trial_class_features = graphene.String()
+        trial_class_price_label = graphene.String()
+        trial_class_price_footer = graphene.String()
+        trial_class_booking_notice = graphene.String()
+        trial_class_payment_required_notice = graphene.String()
+        trial_class_email_template = graphene.String()
         sede_salas_info = graphene.String()
         bank_transfer_details = graphene.String()
         terms_and_conditions = graphene.String()
@@ -1196,7 +1216,7 @@ class UpdateGlobalSettings(graphene.Mutation):
 
     global_settings = graphene.Field(GlobalSettingsType)
 
-    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_price=None, trial_class_email_template=None, trial_class_description=None, sede_salas_info=None, bank_transfer_details=None, terms_and_conditions=None, whatsapp_number=None, whatsapp_assigned_to=None, evolution_api_url=None, evolution_api_key=None, evolution_instance_name=None, whatsapp_auto_reply=None, whatsapp_welcome_template=None):
+    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_price=None, trial_class_deposit_amount=None, trial_class_deposit_label=None, trial_class_balance_footer=None, trial_class_badge=None, trial_class_badge_requirement=None, trial_class_title=None, trial_class_features=None, trial_class_price_label=None, trial_class_price_footer=None, trial_class_booking_notice=None, trial_class_payment_required_notice=None, trial_class_email_template=None, trial_class_description=None, sede_salas_info=None, bank_transfer_details=None, terms_and_conditions=None, whatsapp_number=None, whatsapp_assigned_to=None, evolution_api_url=None, evolution_api_key=None, evolution_instance_name=None, whatsapp_auto_reply=None, whatsapp_welcome_template=None):
         settings = GlobalSettings.get_singleton()
         if phone_number is not None: settings.phone_number = phone_number
         if email_contact is not None: settings.email_contact = email_contact
@@ -1208,8 +1228,21 @@ class UpdateGlobalSettings(graphene.Mutation):
         if trial_class_price is not None:
             from decimal import Decimal
             settings.trial_class_price = Decimal(str(int(trial_class_price)))
-        if trial_class_email_template is not None: settings.trial_class_email_template = trial_class_email_template
+        if trial_class_deposit_amount is not None:
+            from decimal import Decimal
+            settings.trial_class_deposit_amount = Decimal(str(int(trial_class_deposit_amount)))
+        if trial_class_deposit_label is not None: settings.trial_class_deposit_label = trial_class_deposit_label
+        if trial_class_balance_footer is not None: settings.trial_class_balance_footer = trial_class_balance_footer
+        if trial_class_badge is not None: settings.trial_class_badge = trial_class_badge
+        if trial_class_badge_requirement is not None: settings.trial_class_badge_requirement = trial_class_badge_requirement
+        if trial_class_title is not None: settings.trial_class_title = trial_class_title
         if trial_class_description is not None: settings.trial_class_description = trial_class_description
+        if trial_class_features is not None: settings.trial_class_features = trial_class_features
+        if trial_class_price_label is not None: settings.trial_class_price_label = trial_class_price_label
+        if trial_class_price_footer is not None: settings.trial_class_price_footer = trial_class_price_footer
+        if trial_class_booking_notice is not None: settings.trial_class_booking_notice = trial_class_booking_notice
+        if trial_class_payment_required_notice is not None: settings.trial_class_payment_required_notice = trial_class_payment_required_notice
+        if trial_class_email_template is not None: settings.trial_class_email_template = trial_class_email_template
         if sede_salas_info is not None: settings.sede_salas_info = sede_salas_info
         if bank_transfer_details is not None: settings.bank_transfer_details = bank_transfer_details
         if terms_and_conditions is not None: settings.terms_and_conditions = terms_and_conditions
@@ -1336,7 +1369,7 @@ class CreateLead(graphene.Mutation):
             apoderado_nombre=apoderado_nombre,
             servicio=servicio,
             fuente=fuente,
-            estado='PRE_RESERVA'
+            estado='SOLICITUD'
         )
 
         if parsed_res:
@@ -2534,6 +2567,7 @@ class CreatePaymentPreference(graphene.Mutation):
     class Arguments:
         plan_id = graphene.Int(required=False)
         is_trial_class = graphene.Boolean(required=False, default_value=False)
+        pay_deposit = graphene.Boolean(required=False, default_value=False)
         name = graphene.String(required=True)
         email = graphene.String(required=True)
         phone = graphene.String(required=True)
@@ -2550,7 +2584,7 @@ class CreatePaymentPreference(graphene.Mutation):
     preference_id = graphene.String()
     init_point = graphene.String()
 
-    def mutate(self, info, name, email, phone, back_url, plan_id=None, is_trial_class=False, edad=None, apoderado_nombre=None, servicio=None, profesor_nombre=None, fecha=None, hora=None, notas=None):
+    def mutate(self, info, name, email, phone, back_url, plan_id=None, is_trial_class=False, pay_deposit=False, edad=None, apoderado_nombre=None, servicio=None, profesor_nombre=None, fecha=None, hora=None, notas=None):
         import os
         import requests
         from urllib.parse import urlparse
@@ -2584,7 +2618,7 @@ class CreatePaymentPreference(graphene.Mutation):
                     apoderado_nombre=apoderado_nombre,
                     servicio=servicio or 'CLASE_PRUEBA',
                     fuente='WEB',
-                    estado='PRE_RESERVA'
+                    estado='SOLICITUD'
                 )
             else:
                 lead.nombre = name
@@ -2627,13 +2661,22 @@ class CreatePaymentPreference(graphene.Mutation):
             is_trial = is_trial_class or (plan_id is None) or (plan_id == 0)
             if is_trial:
                 gs = GlobalSettings.get_singleton()
-                trial_price = int(round(float(gs.trial_class_price or 15000)))
-                item_id = "trial"
-                item_title = "Clase de Prueba (30 min) - Academia Détaché"
-                item_description = f"Clase de Prueba diagnóstica de 30 minutos ({servicio or 'Música'}) en Academia Détaché"
-                unit_price = trial_price
-                ext_ref = f"lead_id:{lead.id}|plan_id:trial"
-                log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de Clase de Prueba (${trial_price}) para lead: {name} (Email: {email})")
+                if pay_deposit:
+                    deposit_price = int(round(float(gs.trial_class_deposit_amount or 8000)))
+                    item_id = "trial_deposit"
+                    item_title = "Adelanto / Abono Clase de Prueba (30 min) - Academia Détaché"
+                    item_description = f"Adelanto para pre-reserva de Clase de Prueba ({servicio or 'Música'}) en Academia Détaché. Saldo se paga en recepción."
+                    unit_price = deposit_price
+                    ext_ref = f"lead_id:{lead.id}|plan_id:trial|is_deposit:true"
+                    log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de Adelanto Clase de Prueba (${deposit_price}) para lead: {name} (Email: {email})")
+                else:
+                    trial_price = int(round(float(gs.trial_class_price or 16000)))
+                    item_id = "trial"
+                    item_title = "Pago Total Clase de Prueba (30 min) - Academia Détaché"
+                    item_description = f"Pago Total de Clase de Prueba diagnóstica ({servicio or 'Música'}) en Academia Détaché"
+                    unit_price = trial_price
+                    ext_ref = f"lead_id:{lead.id}|plan_id:trial|is_deposit:false"
+                    log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago Total Clase de Prueba (${trial_price}) para lead: {name} (Email: {email})")
             else:
                 plan = Plan.objects.get(pk=plan_id)
                 item_id = str(plan.id)
