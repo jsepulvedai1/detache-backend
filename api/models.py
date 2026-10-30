@@ -11,6 +11,7 @@ class LandingPage(models.Model):
     solution = models.TextField()
     benefits = models.JSONField(default=list)
     image_url = models.CharField(max_length=500, blank=True, null=True)
+    gallery_images = models.JSONField(default=list, blank=True)
     cta = models.CharField(max_length=100)
 
     def __str__(self):

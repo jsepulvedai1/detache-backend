@@ -196,7 +196,7 @@ class HolidayType(DjangoObjectType):
 class LandingPageType(DjangoObjectType):
     class Meta:
         model = LandingPage
-        fields = ("id", "slug", "title", "subtitle", "problem", "solution", "benefits", "image_url", "cta")
+        fields = ("id", "slug", "title", "subtitle", "problem", "solution", "benefits", "image_url", "gallery_images", "cta")
 
 class HomepageContentType(DjangoObjectType):
     class Meta:
@@ -2132,24 +2132,44 @@ class UpdateLandingPage(graphene.Mutation):
         solution = graphene.String()
         benefits = graphene.List(graphene.String)
         image_url = graphene.String()
+        gallery_images = graphene.String()  # JSON string of [{url, caption}]
         cta = graphene.String()
 
     success = graphene.Boolean()
     landing_page = graphene.Field(LandingPageType)
 
-    def mutate(self, info, slug, title=None, subtitle=None, problem=None, solution=None, benefits=None, image_url=None, cta=None):
+    def mutate(self, info, slug, title=None, subtitle=None, problem=None, solution=None, benefits=None, image_url=None, gallery_images=None, cta=None):
+        import json
         try:
-            landing = LandingPage.objects.get(slug=slug)
+            landing, _ = LandingPage.objects.get_or_create(
+                slug=slug,
+                defaults={
+                    "title": title or f"Clases de {slug.capitalize()}",
+                    "subtitle": subtitle or "",
+                    "problem": problem or "",
+                    "solution": solution or "",
+                    "benefits": benefits or [],
+                    "image_url": image_url or "/images/piano-hero.png",
+                    "gallery_images": json.loads(gallery_images) if gallery_images else [],
+                    "cta": cta or "Inscribir Clase de Prueba (30 min)"
+                }
+            )
             if title is not None: landing.title = title
             if subtitle is not None: landing.subtitle = subtitle
             if problem is not None: landing.problem = problem
             if solution is not None: landing.solution = solution
             if benefits is not None: landing.benefits = benefits
             if image_url is not None: landing.image_url = image_url
+            if gallery_images is not None:
+                try:
+                    landing.gallery_images = json.loads(gallery_images)
+                except Exception:
+                    pass
             if cta is not None: landing.cta = cta
             landing.save()
             return UpdateLandingPage(success=True, landing_page=landing)
-        except LandingPage.DoesNotExist:
+        except Exception as e:
+            print(f"Error updating landing page {slug}: {e}")
             return UpdateLandingPage(success=False, landing_page=None)
 
 
