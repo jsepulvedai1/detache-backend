@@ -357,6 +357,7 @@ class Query(graphene.ObjectType):
     all_payments = graphene.List(PaymentType)
     all_academy_tasks = graphene.List(AcademyTaskType)
     all_instruments = graphene.List(InstrumentType)
+    all_specialties = graphene.List(SpecialtyType)
     all_materials = graphene.List(
         MaterialType,
         scope=graphene.String(),
@@ -426,6 +427,34 @@ class Query(graphene.ObjectType):
         return Plan.objects.filter(pk=id).first()
 
     def resolve_all_leads(self, info):
+        try:
+            from django.utils import timezone
+            import datetime
+            now = timezone.now()
+            chile_tz = datetime.timezone(datetime.timedelta(hours=-3))
+            now_chile = now.astimezone(chile_tz)
+
+            pre_reservas = Lead.objects.filter(estado='PRE_RESERVA')
+            for lead in pre_reservas:
+                is_expired = False
+                if lead.fecha_ingreso:
+                    lead_chile = lead.fecha_ingreso.astimezone(chile_tz)
+                    if now_chile.date() > lead_chile.date():
+                        is_expired = True
+                    elif now_chile.date() == lead_chile.date() and now_chile.hour >= 20:
+                        is_expired = True
+
+                for les in lead.lessons.filter(is_pre_reservation=True):
+                    if les.date < now_chile.date():
+                        is_expired = True
+
+                if is_expired:
+                    lead.estado = 'RESERVA_VENCIDA'
+                    lead.save(update_fields=['estado'])
+                    lead.lessons.filter(is_pre_reservation=True).update(status='CANCELLED')
+        except Exception as e:
+            print(f"Error checking expired pre-reservations: {e}")
+
         return Lead.objects.all().order_by('-fecha_ingreso', '-id')
         
     def resolve_lead_by_id(self, info, id):
@@ -436,6 +465,9 @@ class Query(graphene.ObjectType):
 
     def resolve_all_instruments(self, info):
         return Instrument.objects.all()
+
+    def resolve_all_specialties(self, info):
+        return Specialty.objects.all().order_by('name')
 
     def resolve_all_payments(self, info):
         return Payment.objects.all()
@@ -855,6 +887,36 @@ class DeleteAnnouncement(graphene.Mutation):
         except Announcement.DoesNotExist:
             return DeleteAnnouncement(success=False)
 
+def assign_teacher_specialties(teacher, specialty_ids):
+    """
+    Safely resolves and assigns specialties to a teacher.
+    Accepts a list of IDs which may correspond to Instrument IDs (from the frontend selector)
+    or Specialty IDs. Ensures valid Specialty instances exist, preventing foreign key constraint errors.
+    """
+    if specialty_ids is None:
+        return
+
+    specialties_to_set = []
+
+    # 1. Resolve any IDs that match Instrument records
+    matched_instruments = list(Instrument.objects.filter(id__in=specialty_ids))
+    for inst in matched_instruments:
+        name = inst.name.strip() if inst.name else ""
+        if name:
+            spec, _ = Specialty.objects.get_or_create(name=name)
+            specialties_to_set.append(spec)
+
+    # 2. Check for remaining IDs that might be direct Specialty IDs
+    matched_inst_ids = {inst.id for inst in matched_instruments}
+    remaining_ids = [sid for sid in specialty_ids if sid not in matched_inst_ids]
+    if remaining_ids:
+        direct_specs = list(Specialty.objects.filter(id__in=remaining_ids))
+        specialties_to_set.extend(direct_specs)
+
+    # 3. Deduplicate while preserving instances
+    unique_specialties = list({s.id: s for s in specialties_to_set}.values())
+    teacher.specialties.set(unique_specialties)
+
 class CreateTeacher(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
@@ -884,8 +946,8 @@ class CreateTeacher(graphene.Mutation):
             email=email,
             birth_date=birth_date
         )
-        if specialty_ids:
-            teacher.specialties.set(specialty_ids)
+        if specialty_ids is not None:
+            assign_teacher_specialties(teacher, specialty_ids)
 
         assigned_user = None
         user_created = False
@@ -984,7 +1046,7 @@ class UpdateTeacher(graphene.Mutation):
             if email is not None: teacher.email = email
             if birth_date is not None: teacher.birth_date = birth_date
             if specialty_ids is not None:
-                teacher.specialties.set(specialty_ids)
+                assign_teacher_specialties(teacher, specialty_ids)
             teacher.save()
             return UpdateTeacher(teacher=teacher)
         except Teacher.DoesNotExist:
@@ -2016,7 +2078,10 @@ class CreateInstrument(graphene.Mutation):
     instrument = graphene.Field(InstrumentType)
 
     def mutate(self, info, name):
-        instrument = Instrument.objects.create(name=name)
+        name_clean = name.strip() if name else ""
+        instrument = Instrument.objects.create(name=name_clean)
+        if name_clean:
+            Specialty.objects.get_or_create(name=name_clean)
         return CreateInstrument(instrument=instrument)
 
 class UpdateInstrument(graphene.Mutation):
@@ -2028,9 +2093,12 @@ class UpdateInstrument(graphene.Mutation):
 
     def mutate(self, info, id, name):
         try:
+            name_clean = name.strip() if name else ""
             instrument = Instrument.objects.get(pk=id)
-            instrument.name = name
+            instrument.name = name_clean
             instrument.save()
+            if name_clean:
+                Specialty.objects.get_or_create(name=name_clean)
             return UpdateInstrument(instrument=instrument)
         except Instrument.DoesNotExist:
             return UpdateInstrument(instrument=None)
