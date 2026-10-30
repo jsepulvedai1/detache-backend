@@ -166,7 +166,7 @@ class LeadType(DjangoObjectType):
         return str(self.servicio) if self.servicio else "CLASE_PRUEBA"
 
     def resolve_estado(self, info):
-        return str(self.estado) if self.estado else "NUEVO"
+        return str(self.estado) if self.estado else "PRE_RESERVA"
 
 class LeadNoteType(DjangoObjectType):
     class Meta:
@@ -254,6 +254,7 @@ class GlobalSettingsType(DjangoObjectType):
             "id", "phone_number", "email_contact", "address",
             "opening_hours_weekdays", "opening_hours_saturdays",
             "facebook_url", "instagram_url", "trial_class_price", "trial_class_email_template",
+            "trial_class_description", "sede_salas_info", "bank_transfer_details", "terms_and_conditions",
             "whatsapp_number", "whatsapp_assigned_to", "evolution_api_url",
             "evolution_api_key", "evolution_instance_name", "whatsapp_auto_reply",
             "whatsapp_welcome_template"
@@ -634,16 +635,24 @@ class CreatePreReservation(graphene.Mutation):
         if not teacher:
             teacher = Teacher.objects.first()
 
-        end_time = (datetime.combine(datetime.today(), hora) + timedelta(minutes=45)).time()
+        room_obj = None
+        if sala:
+            room_obj = Room.objects.filter(name__icontains=sala).first()
+        if not room_obj:
+            room_obj = Room.objects.filter(status='AVAILABLE').first() or Room.objects.first()
+
+        end_time = (datetime.combine(datetime.today(), hora) + timedelta(minutes=30)).time()
         lesson = Lesson.objects.create(
             teacher=teacher,
             lead=lead,
+            room=room_obj,
             date=fecha,
             start_time=hora,
             end_time=end_time,
             status='PENDING',
             is_pre_reservation=True,
-            lesson_type='INDIVIDUAL'
+            lesson_type='INDIVIDUAL',
+            notes=notas
         )
 
         # Register initial appointment summary as ChatMessage for the Lead
@@ -1137,6 +1146,10 @@ class UpdateGlobalSettings(graphene.Mutation):
         instagram_url = graphene.String()
         trial_class_price = graphene.Float()
         trial_class_email_template = graphene.String()
+        trial_class_description = graphene.String()
+        sede_salas_info = graphene.String()
+        bank_transfer_details = graphene.String()
+        terms_and_conditions = graphene.String()
         whatsapp_number = graphene.String()
         whatsapp_assigned_to = graphene.String()
         evolution_api_url = graphene.String()
@@ -1147,7 +1160,7 @@ class UpdateGlobalSettings(graphene.Mutation):
 
     global_settings = graphene.Field(GlobalSettingsType)
 
-    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_price=None, trial_class_email_template=None, whatsapp_number=None, whatsapp_assigned_to=None, evolution_api_url=None, evolution_api_key=None, evolution_instance_name=None, whatsapp_auto_reply=None, whatsapp_welcome_template=None):
+    def mutate(self, info, phone_number=None, email_contact=None, address=None, opening_hours_weekdays=None, opening_hours_saturdays=None, facebook_url=None, instagram_url=None, trial_class_price=None, trial_class_email_template=None, trial_class_description=None, sede_salas_info=None, bank_transfer_details=None, terms_and_conditions=None, whatsapp_number=None, whatsapp_assigned_to=None, evolution_api_url=None, evolution_api_key=None, evolution_instance_name=None, whatsapp_auto_reply=None, whatsapp_welcome_template=None):
         settings = GlobalSettings.get_singleton()
         if phone_number is not None: settings.phone_number = phone_number
         if email_contact is not None: settings.email_contact = email_contact
@@ -1160,6 +1173,10 @@ class UpdateGlobalSettings(graphene.Mutation):
             from decimal import Decimal
             settings.trial_class_price = Decimal(str(int(trial_class_price)))
         if trial_class_email_template is not None: settings.trial_class_email_template = trial_class_email_template
+        if trial_class_description is not None: settings.trial_class_description = trial_class_description
+        if sede_salas_info is not None: settings.sede_salas_info = sede_salas_info
+        if bank_transfer_details is not None: settings.bank_transfer_details = bank_transfer_details
+        if terms_and_conditions is not None: settings.terms_and_conditions = terms_and_conditions
         if whatsapp_number is not None: settings.whatsapp_number = whatsapp_number
         if whatsapp_assigned_to is not None: settings.whatsapp_assigned_to = whatsapp_assigned_to
         if evolution_api_url is not None: settings.evolution_api_url = evolution_api_url
@@ -1282,7 +1299,8 @@ class CreateLead(graphene.Mutation):
             edad=edad,
             apoderado_nombre=apoderado_nombre,
             servicio=servicio,
-            fuente=fuente
+            fuente=fuente,
+            estado='PRE_RESERVA'
         )
 
         if parsed_res:
@@ -1350,25 +1368,99 @@ class CreateLead(graphene.Mutation):
 
 class ConvertLeadToStudent(graphene.Mutation):
     class Arguments:
-        lead_id = graphene.Int(required=True)
+        lead_id = graphene.ID(required=True)
+        plan_id = graphene.Int(required=False)
+        payment_method = graphene.String(required=False)
+        payment_amount = graphene.Float(required=False)
+        leave_in_followup = graphene.Boolean(required=False)
 
     success = graphene.Boolean()
     student = graphene.Field(StudentType)
 
-    def mutate(self, info, lead_id):
+    def mutate(self, info, lead_id, plan_id=None, payment_method=None, payment_amount=None, leave_in_followup=False):
         try:
             lead = Lead.objects.get(pk=lead_id)
             if lead.estado == 'CONCRETADO':
                 return ConvertLeadToStudent(success=False, student=None)
 
+            # Match primary instrument from lead.servicio if possible
+            matched_instrument = None
+            if lead.servicio:
+                svc_upper = lead.servicio.upper()
+                if 'PIANO' in svc_upper:
+                    matched_instrument = Instrument.objects.filter(name__icontains='Piano').first()
+                elif 'CANTO' in svc_upper:
+                    matched_instrument = Instrument.objects.filter(name__icontains='Canto').first()
+                elif 'VIOLIN' in svc_upper or 'VIOLÍN' in svc_upper:
+                    matched_instrument = Instrument.objects.filter(name__icontains='Viol').first()
+                elif 'GUITARRA' in svc_upper:
+                    matched_instrument = Instrument.objects.filter(name__icontains='Guitarra').first()
+                elif 'BATERIA' in svc_upper or 'BATERÍA' in svc_upper:
+                    matched_instrument = Instrument.objects.filter(name__icontains='Bater').first()
+                elif 'CONTRABAJO' in svc_upper or 'BAJO' in svc_upper:
+                    matched_instrument = Instrument.objects.filter(name__icontains='Bajo').first() or Instrument.objects.filter(name__icontains='Contrabajo').first()
+
             student = Student.objects.create(
                 name=lead.nombre,
                 email=lead.email,
                 phone_number=lead.telefono,
+                guardian_name=lead.apoderado_nombre,
+                primary_instrument=matched_instrument,
                 status='ACTIVE'
             )
-            
+
+            # Link teachers from existing lead lessons
+            teacher_ids = list(Lesson.objects.filter(lead=lead, teacher__isnull=False).values_list('teacher_id', flat=True).distinct())
+            if teacher_ids:
+                student.assigned_teachers.set(Teacher.objects.filter(pk__in=teacher_ids))
+
+            # Copy all LeadNote entries (Auditoría y Notas) to StudentPrivateNote history
+            for ln in lead.notas.all().order_by('fecha'):
+                fecha_str = ln.fecha.strftime('%d/%m/%Y %H:%M') if hasattr(ln.fecha, 'strftime') else str(ln.fecha)
+                StudentPrivateNote.objects.create(
+                    student=student,
+                    text=f"[Historial Prospecto • {fecha_str}] {ln.texto}",
+                    author=ln.autor or "Admisiones"
+                )
+
+            # Also record summary of conversion (Edad, Servicio, etc.)
+            meta_parts = [f"Ficha convertida desde Prospecto (Servicio: {lead.servicio or 'General'})."]
+            if lead.edad:
+                meta_parts.append(f"Edad registrada: {lead.edad} años.")
+            if lead.apoderado_nombre:
+                meta_parts.append(f"Apoderado: {lead.apoderado_nombre}.")
+            if leave_in_followup:
+                meta_parts.append("Estado al concretar: Dejado en SEGUIMIENTO DE PAGO.")
+            StudentPrivateNote.objects.create(
+                student=student,
+                text=" ".join(meta_parts),
+                author="Sistema CRM"
+            )
+
+            # Optional immediate Plan + Payment registration
+            if plan_id and payment_amount and payment_amount > 0:
+                plan = Plan.objects.filter(pk=plan_id).first()
+                pack = None
+                if plan:
+                    pack = StudentPack.objects.create(student=student, plan=plan)
+                Payment.objects.create(
+                    student=student,
+                    amount=payment_amount,
+                    method=payment_method or 'TRANSFER',
+                    description=f"Pago inicial al concretar inscripción ({plan.name if plan else 'Plan'})",
+                    pack=pack
+                )
+            elif leave_in_followup:
+                AcademyTask.objects.create(
+                    title=f"Seguimiento de Pago Plan: {student.name}",
+                    description=f"Alumno traspasado desde CRM en modalidad Seguimiento. Teléfono: {student.phone_number}.",
+                    assigned_to='VENTAS',
+                    priority='IMPORTANTE',
+                    status='PENDING'
+                )
+
             Lesson.objects.filter(lead=lead).update(student=student, is_pre_reservation=False)
+            ChatMessage.objects.filter(lead=lead, student__isnull=True).update(student=student)
             
             lead.estado = 'CONCRETADO'
             lead.save()
@@ -2353,15 +2445,23 @@ class CreatePaymentPreference(graphene.Mutation):
         email = graphene.String(required=True)
         phone = graphene.String(required=True)
         back_url = graphene.String(required=True)
+        edad = graphene.Int(required=False)
+        apoderado_nombre = graphene.String(required=False)
+        servicio = graphene.String(required=False)
+        profesor_nombre = graphene.String(required=False)
+        fecha = graphene.String(required=False)
+        hora = graphene.String(required=False)
+        notas = graphene.String(required=False)
 
     success = graphene.Boolean()
     preference_id = graphene.String()
     init_point = graphene.String()
 
-    def mutate(self, info, name, email, phone, back_url, plan_id=None, is_trial_class=False):
+    def mutate(self, info, name, email, phone, back_url, plan_id=None, is_trial_class=False, edad=None, apoderado_nombre=None, servicio=None, profesor_nombre=None, fecha=None, hora=None, notas=None):
         import os
         import requests
         from urllib.parse import urlparse
+        from datetime import datetime, timedelta, time
         try:
             # Clean and sanitize back_url to base origin
             back_url = back_url.strip().rstrip('/')
@@ -2377,11 +2477,7 @@ class CreatePaymentPreference(graphene.Mutation):
                 back_url = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
             
             print(f"DEBUG: CreatePaymentPreference clean back_url is '{back_url}'")
-            
-            # Mercado Pago API rejects localhost/127.0.0.1 domains when auto_return is enabled.
-            if "localhost" in back_url or "127.0.0.1" in back_url:
-                back_url = "https://pianoacademy-git-main-jsepulvedai1s-projects.vercel.app"
-                print(f"DEBUG: Replaced local back_url with Vercel test domain: '{back_url}'")
+            is_local_back_url = "localhost" in back_url or "127.0.0.1" in back_url or back_url.startswith("http://")
             
             # 1. Create or update the Lead to track payment initiation
             clean_phone = phone[-8:] if len(phone) >= 8 else phone
@@ -2391,50 +2487,102 @@ class CreatePaymentPreference(graphene.Mutation):
                     nombre=name,
                     email=email,
                     telefono=phone,
+                    edad=edad,
+                    apoderado_nombre=apoderado_nombre,
+                    servicio=servicio or 'CLASE_PRUEBA',
                     fuente='WEB',
-                    estado='NUEVO'
+                    estado='PRE_RESERVA'
                 )
             else:
                 lead.nombre = name
                 lead.telefono = phone
+                if edad is not None: lead.edad = edad
+                if apoderado_nombre: lead.apoderado_nombre = apoderado_nombre
+                if servicio: lead.servicio = servicio
                 lead.save()
 
-            # 2. Determine if paying for Trial Class or regular Plan
+            if notas:
+                LeadNote.objects.create(lead=lead, texto=notas, autor='Reserva Web (Checkout)')
+
+            # If trial booking details are provided, ensure the 30-min pre-reservation lesson exists
+            if profesor_nombre and fecha and hora:
+                try:
+                    parsed_date = datetime.strptime(fecha, "%Y-%m-%d").date()
+                    parts = [int(p) for p in hora.split(':')]
+                    start_t = time(parts[0], parts[1])
+                    end_t = (datetime.combine(datetime.today(), start_t) + timedelta(minutes=30)).time()
+                    teacher = Teacher.objects.filter(name__icontains=profesor_nombre).first() or Teacher.objects.first()
+                    room_obj = Room.objects.filter(status='AVAILABLE').first() or Room.objects.first()
+                    existing_lesson = Lesson.objects.filter(lead=lead, date=parsed_date, start_time=start_t).first()
+                    if not existing_lesson and teacher:
+                        Lesson.objects.create(
+                            teacher=teacher,
+                            lead=lead,
+                            room=room_obj,
+                            date=parsed_date,
+                            start_time=start_t,
+                            end_time=end_t,
+                            status='PENDING',
+                            is_pre_reservation=True,
+                            lesson_type='INDIVIDUAL',
+                            notes=notas
+                        )
+                except Exception as l_err:
+                    print(f"Error creating trial lesson during payment preference: {l_err}")
+
+            # 2. Determine if paying for Trial Class or regular Plan (CLP uses integer amounts, no decimals)
             is_trial = is_trial_class or (plan_id is None) or (plan_id == 0)
             if is_trial:
                 gs = GlobalSettings.get_singleton()
-                trial_price = float(gs.trial_class_price or 15000)
-                item_title = "Clase Inicial - Academia Détaché"
+                trial_price = int(round(float(gs.trial_class_price or 15000)))
+                item_id = "trial"
+                item_title = "Clase de Prueba (30 min) - Academia Détaché"
+                item_description = f"Clase de Prueba diagnóstica de 30 minutos ({servicio or 'Música'}) en Academia Détaché"
                 unit_price = trial_price
                 ext_ref = f"lead_id:{lead.id}|plan_id:trial"
-                log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de Clase Inicial (${trial_price:.0f}) para lead: {name} (Email: {email})")
+                log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de Clase de Prueba (${trial_price}) para lead: {name} (Email: {email})")
             else:
                 plan = Plan.objects.get(pk=plan_id)
-                item_title = f"Plan {plan.name} - Détaché"
-                unit_price = float(plan.price)
+                item_id = str(plan.id)
+                item_title = f"Plan {plan.name} - Academia Détaché"
+                item_description = f"Pack de {plan.classes_count} clases de música - {plan.name}"
+                unit_price = int(round(float(plan.price)))
                 ext_ref = f"lead_id:{lead.id}|plan_id:{plan.id}"
                 log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de plan {plan.name} para lead: {name} (Email: {email})")
 
             # 3. Request preference from Mercado Pago
-            token = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "TEST-4651592514397603-071517-68bc59d1e7da5ac1c14335ee790d8a44-2375919242")
+            from django.conf import settings as django_settings
+            token = getattr(django_settings, "MERCADOPAGO_ACCESS_TOKEN", None) or os.getenv(
+                "MERCADOPAGO_ACCESS_TOKEN",
+                "APP_USR-7380703821527282-102115-e7b79ef670baa5a2da1aea4e851af134-3784328780"
+            )
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"
             }
+
+            name_parts = (name or "Alumno Detache").strip().split(" ", 1)
+            first_name = name_parts[0]
+            last_name = name_parts[1] if len(name_parts) > 1 else "Alumno"
             
             preference_data = {
                 "items": [
                     {
+                        "id": item_id,
                         "title": item_title,
+                        "description": item_description,
+                        "category_id": "learnings",
                         "quantity": 1,
                         "unit_price": unit_price,
                         "currency_id": "CLP"
                     }
                 ],
                 "payer": {
-                    "name": name,
+                    "name": first_name,
+                    "surname": last_name,
                     "email": email,
                     "phone": {
+                        "area_code": "56",
                         "number": phone.replace("+56", "").replace("+", "").strip()
                     }
                 },
@@ -2443,12 +2591,18 @@ class CreatePaymentPreference(graphene.Mutation):
                     "pending": f"{back_url}/checkout/pending",
                     "failure": f"{back_url}/checkout/failure"
                 },
-                "auto_return": "approved",
+                "statement_descriptor": "ACADEMIA DETACHE",
                 "external_reference": ext_ref
             }
+
+            # Mercado Pago only accepts auto_return when back_urls use HTTPS
+            if not is_local_back_url:
+                preference_data["auto_return"] = "approved"
             
             notification_url = info.context.build_absolute_uri('/api/mercadopago/webhook/')
             if "localhost" not in notification_url and "127.0.0.1" not in notification_url:
+                if notification_url.startswith("http://"):
+                    notification_url = notification_url.replace("http://", "https://", 1)
                 preference_data["notification_url"] = notification_url
             
             response = requests.post(
@@ -2461,10 +2615,12 @@ class CreatePaymentPreference(graphene.Mutation):
             if response.status_code in [200, 201]:
                 res_data = response.json()
                 pref_id = res_data.get("id")
-                # Use sandbox init point if sandbox token, otherwise live init point
-                init_pt = res_data.get("sandbox_init_point") if "TEST" in token else res_data.get("init_point")
-                if not init_pt:
+                # APP_USR tokens (both sandbox test apps and production) work via init_point;
+                # legacy TEST- tokens use sandbox_init_point.
+                if token.startswith("TEST-"):
                     init_pt = res_data.get("sandbox_init_point") or res_data.get("init_point")
+                else:
+                    init_pt = res_data.get("init_point") or res_data.get("sandbox_init_point")
                 
                 return CreatePaymentPreference(
                     success=True,

@@ -146,7 +146,7 @@ class Lead(models.Model):
     apoderado_nombre = models.CharField(max_length=255, blank=True, null=True, help_text="Nombre del apoderado si el alumno es menor de edad")
     servicio = models.CharField(max_length=50, choices=SERVICE_CHOICES, default='CLASE_PRUEBA')
     fuente = models.CharField(max_length=50, choices=SOURCE_CHOICES, default='WEB')
-    estado = models.CharField(max_length=50, choices=STATUS_CHOICES, default='NUEVO')
+    estado = models.CharField(max_length=50, choices=STATUS_CHOICES, default='PRE_RESERVA')
     asignado_a = models.CharField(max_length=100, blank=True, null=True, default='Recepción')
     fecha_ingreso = models.DateTimeField(auto_now_add=True)
     fecha_ultimo_contacto = models.DateTimeField(auto_now=True)
@@ -379,7 +379,7 @@ class Payment(models.Model):
         ('CASH', 'Efectivo'),
         ('CARD', 'Tarjeta'),
     ]
-    student = models.ForeignKey(Student, related_name='payments', on_delete=models.CASCADE)
+    student = models.ForeignKey(Student, related_name='payments', on_delete=models.CASCADE, null=True, blank=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     payment_date = models.DateField(default=timezone.now)
     method = models.CharField(max_length=50, choices=METHOD_CHOICES, default='TRANSFER')
@@ -388,7 +388,7 @@ class Payment(models.Model):
     pack = models.ForeignKey(StudentPack, related_name='payments', on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
-        return f"${self.amount} by {self.student.name} on {self.payment_date}"
+        return f"${self.amount} by {self.student.name if self.student else 'Prospecto'} on {self.payment_date}"
 
 class AcademyTask(models.Model):
     PRIORITY_CHOICES = [
@@ -602,6 +602,22 @@ class GlobalSettings(models.Model):
     trial_class_price = models.DecimalField(max_digits=10, decimal_places=0, default=15000, help_text="Monto para link de pago de clase inicial / prueba")
     trial_class_email_template = models.TextField(
         default='Hola {nombre},\n\nHemos recibido tu pre-reserva de Clase de Prueba con {profesor} para el {fecha} a las {hora}.\n\nPor favor, ten en cuenta que para confirmar tu cupo debes realizar el pago antes de las 20:00 hrs de hoy. De lo contrario, el horario quedará liberado automáticamente.\n\nSaludos,\nAcademia Détaché'
+    )
+    trial_class_description = models.TextField(
+        default='Sesión individual de 30 minutos donde evaluamos tu nivel o potencial inicial, resolvemos tus dudas metodológicas y trazamos un plan de estudio personalizado en tu instrumento.',
+        blank=True
+    )
+    sede_salas_info = models.TextField(
+        default='Sede La Cisterna — Gran Avenida José Miguel Carrera 8520, Oficina C (A pasos de Metro La Cisterna). Contamos con salas acústicamente acondicionadas y equipadas con instrumentos profesionales para Piano, Canto, Guitarra, Violín y Batería.',
+        blank=True
+    )
+    bank_transfer_details = models.TextField(
+        default='Banco: Banco Estado / Santander\nTipo de Cuenta: Cuenta Corriente / Vista\nNombre: Academia de Música Détaché\nEmail de confirmación: academia@detache.cl\nAsunto: Clase de Prueba + Nombre del Alumno',
+        blank=True
+    )
+    terms_and_conditions = models.TextField(
+        default='1. CLASES DE PRUEBA Y RESERVAS\n• Toda clase de prueba tiene una duración de 30 minutos y requiere pago anticipado para quedar agendada y confirmada.\n• Las reservas web deben realizarse con al menos 24 horas de anticipación (no se agendan horas para el mismo día por internet).\n• Las pre-reservas pendientes de transferencia vencen a las 20:00 hrs del día en que se solicitan.\n\n2. EDADES MÍNIMAS POR INSTRUMENTO\n• Piano: desde los 4 años\n• Canto: desde los 6 años\n• Batería: desde los 6 años\n• Guitarra: desde los 8 años\n\n3. ASISTENCIA, AVISOS Y RECUPERACIÓN DE CLASES\n• Las inasistencias deben ser avisadas con al menos 24 horas de anticipación para poder reprogramar la clase dentro de la vigencia del plan sin descontarla del pack.\n• Inasistencias sin aviso previo o fuera de plazo se consideran como clase realizada y se descuentan del plan activo.\n\n4. VIGENCIA Y CONGELAMIENTO DE PLANES\n• Los planes mensuales tienen vigencia de 4 semanas consecutivas desde su inicio.\n• Cualquier solicitud de congelamiento debe informarse en administración indicando la fecha de retorno.',
+        blank=True
     )
 
     # WhatsApp & Evolution API Settings

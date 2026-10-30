@@ -94,7 +94,7 @@ class WhatsAppWebhookView(View):
                             nombre=lead_name,
                             telefono=formatted_phone,
                             fuente='WHATSAPP',
-                            estado='NUEVO',
+                            estado='PRE_RESERVA',
                             fecha_ultimo_contacto=timezone.now()
                         )
                         is_brand_new_lead = True
@@ -271,12 +271,16 @@ class MediaUploadView(View):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class MercadoPagoWebhookView(View):
+    def get(self, request, *args, **kwargs):
+        return self.post(request, *args, **kwargs)
+
     def post(self, request, *args, **kwargs):
         import os
         import json
         import requests
+        from django.conf import settings as django_settings
         from django.utils import timezone
-        from .models import Lead, Student, StudentPack, Plan, Payment, Lesson
+        from .models import Lead, LeadNote, Student, StudentPack, Plan, Payment, Lesson
         
         print("--- MERCADOPAGO WEBHOOK RECEIVED ---")
         try:
@@ -288,21 +292,25 @@ class MercadoPagoWebhookView(View):
                     print(f"Could not parse body JSON: {parse_err}")
             
             action = data.get("action")
-            event_type = data.get("type")
-            data_info = data.get("data", {})
-            payment_id = data_info.get("id")
-            
-            # Fallback to query params
-            if not payment_id:
-                payment_id = request.GET.get("data.id")
-            if not event_type:
-                event_type = request.GET.get("type")
+            event_type = data.get("type") or data.get("topic") or request.GET.get("type") or request.GET.get("topic")
+            data_info = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
+            payment_id = (
+                data_info.get("id")
+                or data.get("payment_id")
+                or request.GET.get("data.id")
+                or request.GET.get("payment_id")
+                or request.GET.get("collection_id")
+                or request.GET.get("id")
+            )
             
             print(f"Webhook event_type: {event_type}, payment_id: {payment_id}")
             
-            if event_type == "payment" and payment_id:
-                # Retrieve the full payment info
-                token = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "TEST-4651592514397603-071517-68bc59d1e7da5ac1c14335ee790d8a44-2375919242")
+            if (event_type == "payment" or payment_id) and payment_id and str(payment_id) != "null":
+                # Retrieve the full payment info from Mercado Pago API
+                token = getattr(django_settings, "MERCADOPAGO_ACCESS_TOKEN", None) or os.getenv(
+                    "MERCADOPAGO_ACCESS_TOKEN",
+                    "APP_USR-7380703821527282-102115-e7b79ef670baa5a2da1aea4e851af134-3784328780"
+                )
                 headers = {
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json"
@@ -318,14 +326,14 @@ class MercadoPagoWebhookView(View):
                     pay_data = pay_resp.json()
                     status = pay_data.get("status")
                     transaction_amount = pay_data.get("transaction_amount")
-                    external_reference = pay_data.get("external_reference")
+                    external_reference = pay_data.get("external_reference") or data.get("external_reference") or request.GET.get("external_reference")
                     
                     print(f"Payment {payment_id} Status: {status}, ExtRef: {external_reference}, Amount: {transaction_amount}")
                     
                     if status == "approved" and external_reference:
                         # Parse external_reference: format "lead_id:X|plan_id:Y"
                         try:
-                            ref_parts = dict(part.split(":") for part in external_reference.split("|"))
+                            ref_parts = dict(part.split(":") for part in external_reference.split("|") if ":" in part)
                             lead_id = ref_parts.get("lead_id")
                             plan_id = ref_parts.get("plan_id")
                         except Exception as parse_ref_err:
@@ -343,7 +351,7 @@ class MercadoPagoWebhookView(View):
                                 lessons_updated = Lesson.objects.filter(lead=lead).update(status='CONFIRMED', is_pre_reservation=False)
                                 print(f"Webhook confirmed {lessons_updated} trial lessons for lead {lead.id}")
                                 
-                                existing_payment = Payment.objects.filter(description__icontains=payment_id).first()
+                                existing_payment = Payment.objects.filter(description__icontains=str(payment_id)).first()
                                 if not existing_payment:
                                     from .models import GlobalSettings
                                     gs = GlobalSettings.get_singleton()
@@ -351,7 +359,12 @@ class MercadoPagoWebhookView(View):
                                     Payment.objects.create(
                                         amount=trial_amount,
                                         method='CARD',
-                                        description=f"Pago Clase Inicial aprobado por Mercado Pago (ID: {payment_id}) para {lead.nombre}"
+                                        description=f"Pago Clase de Prueba (30 min) aprobado por Mercado Pago (ID: {payment_id}) para {lead.nombre}"
+                                    )
+                                    LeadNote.objects.create(
+                                        lead=lead,
+                                        texto=f"✅ Pago de Clase de Prueba (30 min) confirmado vía Mercado Pago (Transacción #{payment_id} por ${int(trial_amount):,}). Reserva confirmada.",
+                                        autor="Mercado Pago"
                                     )
                                     print(f"Webhook registered trial class payment for lead {lead.nombre}")
                                     
@@ -381,8 +394,20 @@ class MercadoPagoWebhookView(View):
                                         name=lead.nombre,
                                         email=lead.email,
                                         phone_number=lead.telefono,
+                                        guardian_name=lead.apoderado_nombre,
                                         status='ACTIVE'
                                     )
+                                    try:
+                                        from .models import StudentPrivateNote
+                                        for ln in lead.notas.all().order_by('fecha'):
+                                            fecha_str = ln.fecha.strftime('%d/%m/%Y %H:%M') if hasattr(ln.fecha, 'strftime') else str(ln.fecha)
+                                            StudentPrivateNote.objects.create(
+                                                student=student,
+                                                text=f"[Historial Prospecto • {fecha_str}] {ln.texto}",
+                                                author=ln.autor or "Admisiones"
+                                            )
+                                    except Exception as note_copy_err:
+                                        print(f"Error copying LeadNote to StudentPrivateNote: {note_copy_err}")
                                     print(f"Webhook created new student {student.name} for lead {lead.id}")
                                 else:
                                     if student.status != 'ACTIVE':
