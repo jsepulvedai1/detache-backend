@@ -13,6 +13,14 @@ class LandingPage(models.Model):
     image_url = models.CharField(max_length=500, blank=True, null=True)
     gallery_images = models.JSONField(default=list, blank=True)
     cta = models.CharField(max_length=100)
+    why_learn_title = models.CharField(max_length=255, blank=True, default='')
+    why_learn_subtitle = models.TextField(blank=True, default='')
+    show_hero = models.BooleanField(default=True)
+    show_gallery = models.BooleanField(default=True)
+    show_teachers = models.BooleanField(default=True)
+    show_methodology = models.BooleanField(default=True)
+    show_why_learn = models.BooleanField(default=True)
+    show_cta = models.BooleanField(default=True)
 
     def __str__(self):
         return f"Landing: {self.title} ({self.slug})"

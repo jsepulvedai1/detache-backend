@@ -34,6 +34,8 @@ def log_user_action(info, action, details):
 # --- Object Types ---
 
 class UserProfileType(DjangoObjectType):
+    role = graphene.String()
+
     class Meta:
         model = UserProfile
         fields = ("id", "user", "role", "allowed_sections")
@@ -58,17 +60,23 @@ class AuditLogType(DjangoObjectType):
         fields = ("id", "user", "username", "action", "details", "ip_address", "timestamp")
 
 class ChatMessageType(DjangoObjectType):
+    sender = graphene.String()
+
     class Meta:
         model = ChatMessage
         fields = ("id", "lead", "student", "phone_number", "sender", "message_text", "message_id", "timestamp")
 
 
 class AnnouncementType(DjangoObjectType):
+    target_audience = graphene.String()
+
     class Meta:
         model = Announcement
         fields = '__all__'
 
 class TeacherType(DjangoObjectType):
+    status = graphene.String()
+
     class Meta:
         model = Teacher
         fields = ("id", "name", "description", "photo", "status", "specialties", "availabilities", "phone_number", "rut", "address", "email", "birth_date", "user")
@@ -84,12 +92,15 @@ class SpecialtyType(DjangoObjectType):
         fields = ("id", "name")
 
 class AvailabilityType(DjangoObjectType):
+    day = graphene.String()
+
     class Meta:
         model = Availability
         fields = ("id", "day", "start_time", "end_time", "teacher")
 
 class StudentType(DjangoObjectType):
     status = graphene.String()
+    level = graphene.String()
 
     class Meta:
         model = Student
@@ -97,6 +108,9 @@ class StudentType(DjangoObjectType):
 
     def resolve_status(self, info):
         return str(self.status) if self.status else "ACTIVE"
+
+    def resolve_level(self, info):
+        return str(self.level) if self.level else "BEGINNER"
 
     def resolve_photo(self, info):
         if self.photo:
@@ -127,6 +141,8 @@ class InstrumentType(DjangoObjectType):
         fields = ("id", "name")
 
 class RoomType(DjangoObjectType):
+    status = graphene.String()
+
     class Meta:
         model = Room
         fields = ("id", "name", "capacity", "status", "instruments")
@@ -179,11 +195,26 @@ class StudentPackType(DjangoObjectType):
         fields = ("id", "student", "plan", "total_classes", "remaining_classes", "purchase_date", "expiration_date", "is_active", "payments")
 
 class PaymentType(DjangoObjectType):
+    method = graphene.String()
+
     class Meta:
         model = Payment
         fields = ("id", "student", "amount", "payment_date", "method", "description", "pack")
 
+    def resolve_method(self, info):
+        mapping = {
+            "EFECTIVO": "CASH",
+            "TRANSFERENCIA": "TRANSFER",
+            "TARJETA": "CARD",
+        }
+        raw = str(self.method).upper() if self.method else "TRANSFER"
+        return mapping.get(raw, raw)
+
 class AcademyTaskType(DjangoObjectType):
+    assigned_to = graphene.String()
+    priority = graphene.String()
+    status = graphene.String()
+
     class Meta:
         model = AcademyTask
         fields = ("id", "title", "description", "assigned_to", "assigned_user", "priority", "status", "log", "is_completed", "due_date", "duration", "completed_at", "created_at", "updated_at")
@@ -196,7 +227,12 @@ class HolidayType(DjangoObjectType):
 class LandingPageType(DjangoObjectType):
     class Meta:
         model = LandingPage
-        fields = ("id", "slug", "title", "subtitle", "problem", "solution", "benefits", "image_url", "gallery_images", "cta")
+        fields = (
+            "id", "slug", "title", "subtitle", "problem", "solution", "benefits",
+            "image_url", "gallery_images", "cta",
+            "why_learn_title", "why_learn_subtitle",
+            "show_hero", "show_gallery", "show_teachers", "show_methodology", "show_why_learn", "show_cta"
+        )
 
 class HomepageContentType(DjangoObjectType):
     class Meta:
@@ -1443,10 +1479,12 @@ class ConvertLeadToStudent(graphene.Mutation):
                 pack = None
                 if plan:
                     pack = StudentPack.objects.create(student=student, plan=plan)
+                method_map = {'EFECTIVO': 'CASH', 'TRANSFERENCIA': 'TRANSFER', 'TARJETA': 'CARD'}
+                clean_method = method_map.get(str(payment_method or 'TRANSFER').upper(), payment_method or 'TRANSFER')
                 Payment.objects.create(
                     student=student,
                     amount=payment_amount,
-                    method=payment_method or 'TRANSFER',
+                    method=clean_method,
                     description=f"Pago inicial al concretar inscripción ({plan.name if plan else 'Plan'})",
                     pack=pack
                 )
@@ -1495,10 +1533,12 @@ class RegisterPayment(graphene.Mutation):
             except Exception as notif_err:
                 print(f"Error triggering manual purchase notifications: {notif_err}")
 
+        method_map = {'EFECTIVO': 'CASH', 'TRANSFERENCIA': 'TRANSFER', 'TARJETA': 'CARD'}
+        clean_method = method_map.get(str(method or 'TRANSFER').upper(), method or 'TRANSFER')
         payment = Payment.objects.create(
             student=student,
             amount=amount,
-            method=method,
+            method=clean_method,
             description=description,
             pack=pack
         )
@@ -2134,11 +2174,19 @@ class UpdateLandingPage(graphene.Mutation):
         image_url = graphene.String()
         gallery_images = graphene.String()  # JSON string of [{url, caption}]
         cta = graphene.String()
+        why_learn_title = graphene.String()
+        why_learn_subtitle = graphene.String()
+        show_hero = graphene.Boolean()
+        show_gallery = graphene.Boolean()
+        show_teachers = graphene.Boolean()
+        show_methodology = graphene.Boolean()
+        show_why_learn = graphene.Boolean()
+        show_cta = graphene.Boolean()
 
     success = graphene.Boolean()
     landing_page = graphene.Field(LandingPageType)
 
-    def mutate(self, info, slug, title=None, subtitle=None, problem=None, solution=None, benefits=None, image_url=None, gallery_images=None, cta=None):
+    def mutate(self, info, slug, title=None, subtitle=None, problem=None, solution=None, benefits=None, image_url=None, gallery_images=None, cta=None, why_learn_title=None, why_learn_subtitle=None, show_hero=None, show_gallery=None, show_teachers=None, show_methodology=None, show_why_learn=None, show_cta=None):
         import json
         try:
             landing, _ = LandingPage.objects.get_or_create(
@@ -2151,7 +2199,15 @@ class UpdateLandingPage(graphene.Mutation):
                     "benefits": benefits or [],
                     "image_url": image_url or "/images/piano-hero.png",
                     "gallery_images": json.loads(gallery_images) if gallery_images else [],
-                    "cta": cta or "Inscribir Clase de Prueba (30 min)"
+                    "cta": cta or "Inscribir Clase de Prueba (30 min)",
+                    "why_learn_title": why_learn_title or "",
+                    "why_learn_subtitle": why_learn_subtitle or "",
+                    "show_hero": show_hero if show_hero is not None else True,
+                    "show_gallery": show_gallery if show_gallery is not None else True,
+                    "show_teachers": show_teachers if show_teachers is not None else True,
+                    "show_methodology": show_methodology if show_methodology is not None else True,
+                    "show_why_learn": show_why_learn if show_why_learn is not None else True,
+                    "show_cta": show_cta if show_cta is not None else True,
                 }
             )
             if title is not None: landing.title = title
@@ -2166,6 +2222,14 @@ class UpdateLandingPage(graphene.Mutation):
                 except Exception:
                     pass
             if cta is not None: landing.cta = cta
+            if why_learn_title is not None: landing.why_learn_title = why_learn_title
+            if why_learn_subtitle is not None: landing.why_learn_subtitle = why_learn_subtitle
+            if show_hero is not None: landing.show_hero = show_hero
+            if show_gallery is not None: landing.show_gallery = show_gallery
+            if show_teachers is not None: landing.show_teachers = show_teachers
+            if show_methodology is not None: landing.show_methodology = show_methodology
+            if show_why_learn is not None: landing.show_why_learn = show_why_learn
+            if show_cta is not None: landing.show_cta = show_cta
             landing.save()
             return UpdateLandingPage(success=True, landing_page=landing)
         except Exception as e:
@@ -2196,7 +2260,16 @@ class CloneLandingPage(graphene.Mutation):
                 solution=source.solution,
                 benefits=source.benefits,
                 image_url=source.image_url,
-                cta=source.cta
+                gallery_images=source.gallery_images,
+                cta=source.cta,
+                why_learn_title=source.why_learn_title,
+                why_learn_subtitle=source.why_learn_subtitle,
+                show_hero=source.show_hero,
+                show_gallery=source.show_gallery,
+                show_teachers=source.show_teachers,
+                show_methodology=source.show_methodology,
+                show_why_learn=source.show_why_learn,
+                show_cta=source.show_cta
             )
             return CloneLandingPage(success=True, landing_page=clone, error=None)
         except LandingPage.DoesNotExist:
