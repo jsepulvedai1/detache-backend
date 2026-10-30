@@ -145,6 +145,7 @@ class Lead(models.Model):
         ('SOLICITUD', 'Solicitud Recibida'),
         ('PRE_RESERVA', 'Pre-Reserva (Con Adelanto)'),
         ('RESERVA_CONFIRMADA', 'Reserva Confirmada (Pago Total)'),
+        ('RESERVA_VENCIDA', 'Reserva Vencida'),
         ('CONTACTADO', 'Contactado / En Seguimiento'),
         ('CONCRETADO', 'Venta Concretada / Alumno'),
         ('NUEVO', 'Nuevo Lead'),

@@ -1702,6 +1702,8 @@ class UpdateLeadStatus(graphene.Mutation):
 
             if status == 'RESERVA_CONFIRMADA':
                 Lesson.objects.filter(lead=lead, is_pre_reservation=True).update(status='CONFIRMED', is_pre_reservation=False)
+            elif status == 'RESERVA_VENCIDA':
+                Lesson.objects.filter(lead=lead, is_pre_reservation=True).update(status='CANCELLED')
 
             try:
                 OnLeadUpdated.broadcast(group="leads_group", payload={"lead_id": lead.id, "event_type": "updated"})
@@ -2661,22 +2663,13 @@ class CreatePaymentPreference(graphene.Mutation):
             is_trial = is_trial_class or (plan_id is None) or (plan_id == 0)
             if is_trial:
                 gs = GlobalSettings.get_singleton()
-                if pay_deposit:
-                    deposit_price = int(round(float(gs.trial_class_deposit_amount or 8000)))
-                    item_id = "trial_deposit"
-                    item_title = "Adelanto / Abono Clase de Prueba (30 min) - Academia Détaché"
-                    item_description = f"Adelanto para pre-reserva de Clase de Prueba ({servicio or 'Música'}) en Academia Détaché. Saldo se paga en recepción."
-                    unit_price = deposit_price
-                    ext_ref = f"lead_id:{lead.id}|plan_id:trial|is_deposit:true"
-                    log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago de Adelanto Clase de Prueba (${deposit_price}) para lead: {name} (Email: {email})")
-                else:
-                    trial_price = int(round(float(gs.trial_class_price or 16000)))
-                    item_id = "trial"
-                    item_title = "Pago Total Clase de Prueba (30 min) - Academia Détaché"
-                    item_description = f"Pago Total de Clase de Prueba diagnóstica ({servicio or 'Música'}) en Academia Détaché"
-                    unit_price = trial_price
-                    ext_ref = f"lead_id:{lead.id}|plan_id:trial|is_deposit:false"
-                    log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago Total Clase de Prueba (${trial_price}) para lead: {name} (Email: {email})")
+                trial_price = int(round(float(gs.trial_class_price or 16000)))
+                item_id = "trial"
+                item_title = "Pago Clase de Prueba (30 min) - Academia Détaché"
+                item_description = f"Pago de Clase de Prueba diagnóstica ({servicio or 'Música'}) en Academia Détaché"
+                unit_price = trial_price
+                ext_ref = f"lead_id:{lead.id}|plan_id:trial|is_deposit:false"
+                log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago Clase de Prueba (${trial_price}) para lead: {name} (Email: {email})")
             else:
                 plan = Plan.objects.get(pk=plan_id)
                 item_id = str(plan.id)
