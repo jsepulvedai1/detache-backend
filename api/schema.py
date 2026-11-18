@@ -190,9 +190,17 @@ class LeadNoteType(DjangoObjectType):
         fields = ("id", "lead", "texto", "autor", "fecha")
 
 class StudentPackType(DjangoObjectType):
+    is_expired = graphene.Boolean()
+
     class Meta:
         model = StudentPack
         fields = ("id", "student", "plan", "total_classes", "remaining_classes", "purchase_date", "expiration_date", "is_active", "payments")
+
+    def resolve_is_active(self, info):
+        return bool(self.is_active and not self.is_expired)
+
+    def resolve_is_expired(self, info):
+        return self.is_expired
 
 class PaymentType(DjangoObjectType):
     method = graphene.String()
@@ -403,10 +411,14 @@ class Query(graphene.ObjectType):
         return Teacher.objects.filter(pk=id).first()
 
     def resolve_all_students(self, info):
+        StudentPack.deactivate_expired()
         return Student.objects.all()
 
     def resolve_student_by_id(self, info, id):
-        return Student.objects.filter(pk=id).first()
+        student = Student.objects.filter(pk=id).first()
+        if student:
+            StudentPack.deactivate_expired(student=student)
+        return student
 
     def resolve_all_rooms(self, info):
         return Room.objects.all()
@@ -461,7 +473,8 @@ class Query(graphene.ObjectType):
         return Lead.objects.filter(pk=id).first()
 
     def resolve_all_student_packs(self, info):
-        return StudentPack.objects.all()
+        StudentPack.deactivate_expired()
+        return StudentPack.objects.all().order_by('-purchase_date', '-id')
 
     def resolve_all_instruments(self, info):
         return Instrument.objects.all()
@@ -655,7 +668,8 @@ class Query(graphene.ObjectType):
             raise Exception("No autenticado.")
         try:
             student = user.student_profile
-            return StudentPack.objects.filter(student=student).order_by('-purchase_date')
+            StudentPack.deactivate_expired(student=student)
+            return StudentPack.objects.filter(student=student).order_by('expiration_date', '-purchase_date')
         except:
             raise Exception("No tienes un perfil de alumno vinculado.")
 
@@ -813,22 +827,39 @@ class CreateLesson(graphene.Mutation):
         student = Student.objects.get(pk=student_id)
         room = Room.objects.get(pk=room_id)
 
-        # Validar si el alumno tiene un pack de clases activo con créditos disponibles
-        from django.db.models import Sum
-        active_packs = StudentPack.objects.filter(student=student, is_active=True)
-        total_remaining = active_packs.aggregate(total=Sum('remaining_classes'))['total'] or 0
+        # Validar si el alumno tiene packs activos vigentes con créditos suficientes para la fecha de la clase
+        today = StudentPack.get_chile_today()
+        valid_packs = list(StudentPack.valid_packs_for_student(student, on_date=today))
+        total_remaining = sum(p.remaining_classes for p in valid_packs)
 
         if total_remaining <= 0:
-            raise Exception(f"El alumno {student.name} no cuenta con clases disponibles en sus packs (0 créditos restantes). Debe adquirir o renovar un pack antes de agendar.")
+            raise Exception(f"El alumno {student.name} no cuenta con clases vigentes disponibles en sus packs (0 créditos válidos). Debe adquirir o renovar un pack antes de agendar.")
 
-        # Contar clases pendientes o confirmadas ya agendadas que consumirán créditos
-        pending_scheduled_lessons = Lesson.objects.filter(
-            student=student,
-            status__in=['PENDING', 'CONFIRMED']
-        ).count()
+        # Asignación FIFO (Early-Deadline-First) considerando las fechas de vencimiento de cada pack
+        pending_dates = list(
+            Lesson.objects.filter(student=student, status__in=['PENDING', 'CONFIRMED'])
+            .order_by('date', 'start_time', 'id')
+            .values_list('date', flat=True)
+        )
+        if len(pending_dates) >= total_remaining:
+            raise Exception(f"El alumno {student.name} ya tiene {len(pending_dates)} clase(s) programada(s) que cubren la totalidad de sus {total_remaining} crédito(s) vigente(s). Debe adquirir más clases para agendar nuevas sesiones.")
 
-        if pending_scheduled_lessons >= total_remaining:
-            raise Exception(f"El alumno {student.name} ya tiene {pending_scheduled_lessons} clase(s) programada(s) que cubren la totalidad de sus {total_remaining} crédito(s) restante(s). Debe adquirir más clases para agendar nuevas sesiones.")
+        all_dates = sorted(pending_dates + [date])
+        pack_slots = [
+            {"exp": p.expiration_date, "left": p.remaining_classes}
+            for p in valid_packs
+        ]
+        for lesson_d in all_dates:
+            placed = False
+            for slot in pack_slots:
+                if slot["left"] > 0 and (slot["exp"] is None or slot["exp"] >= lesson_d):
+                    slot["left"] -= 1
+                    placed = True
+                    break
+            if not placed:
+                raise Exception(
+                    f"El alumno {student.name} no cuenta con créditos vigentes para el {date} (sus créditos disponibles vencen antes de esa fecha)."
+                )
         
         lesson = Lesson.objects.create(
             teacher=teacher,
@@ -1752,18 +1783,24 @@ class ManualDeductClass(graphene.Mutation):
         pack_id = graphene.Int(required=True)
 
     success = graphene.Boolean()
+    error = graphene.String()
     pack = graphene.Field(StudentPackType)
 
     def mutate(self, info, pack_id):
         try:
             pack = StudentPack.objects.get(pk=pack_id)
+            if pack.is_expired:
+                if pack.is_active:
+                    pack.is_active = False
+                    pack.save(update_fields=['is_active'])
+                return ManualDeductClass(success=False, error="Este pack se encuentra vencido.", pack=pack)
             if pack.remaining_classes > 0:
                 pack.remaining_classes -= 1
                 pack.save()
                 return ManualDeductClass(success=True, pack=pack)
-            return ManualDeductClass(success=False, pack=pack)
+            return ManualDeductClass(success=False, error="El pack no tiene clases disponibles.", pack=pack)
         except StudentPack.DoesNotExist:
-            return ManualDeductClass(success=False, pack=None)
+            return ManualDeductClass(success=False, error="Pack no encontrado.", pack=None)
 
 class UpdateLessonStatus(graphene.Mutation):
     class Arguments:
@@ -1780,6 +1817,7 @@ class UpdateLessonStatus(graphene.Mutation):
 
     def mutate(self, info, lesson_id, status, notes=None, reschedule_date=None, reschedule_start_time=None, reschedule_end_time=None):
         try:
+            from django.db.models import F, Q
             lesson = Lesson.objects.get(pk=lesson_id)
             old_status = lesson.status
             lesson.status = status
@@ -1787,27 +1825,43 @@ class UpdateLessonStatus(graphene.Mutation):
                 lesson.notes = notes
             lesson.save()
 
+            if lesson.student:
+                StudentPack.deactivate_expired(student=lesson.student)
+
             # Auto-deduct class if status changed to COMPLETED or ABSENT
+            # Consume earliest-expiring pack valid for the lesson date (FIFO).
             deducting_statuses = ['COMPLETED', 'ABSENT']
-            if old_status not in deducting_statuses and status in deducting_statuses:
-                active_pack = StudentPack.objects.filter(
-                    student=lesson.student,
-                    is_active=True,
-                    remaining_classes__gt=0
-                ).order_by('expiration_date').first()
+            if old_status not in deducting_statuses and status in deducting_statuses and lesson.student:
+                active_pack = (
+                    StudentPack.objects.filter(
+                        student=lesson.student,
+                        remaining_classes__gt=0
+                    )
+                    .filter(Q(expiration_date__isnull=True) | Q(expiration_date__gte=lesson.date))
+                    .order_by('-is_active', F('expiration_date').asc(nulls_last=True), 'purchase_date', 'id')
+                    .first()
+                )
                 if active_pack:
                     active_pack.remaining_classes -= 1
                     active_pack.save()
             
             # Auto-refund class if changed from COMPLETED/ABSENT to something else
-            elif old_status in deducting_statuses and status not in deducting_statuses:
-                active_pack = StudentPack.objects.filter(
-                    student=lesson.student,
-                    is_active=True
-                ).order_by('-expiration_date').first()
-                if active_pack:
-                    active_pack.remaining_classes += 1
-                    active_pack.save()
+            elif old_status in deducting_statuses and status not in deducting_statuses and lesson.student:
+                today = StudentPack.get_chile_today()
+                refundable_pack = (
+                    StudentPack.objects.filter(
+                        student=lesson.student,
+                        remaining_classes__lt=F('total_classes')
+                    )
+                    .filter(Q(expiration_date__isnull=True) | Q(expiration_date__gte=lesson.date))
+                    .order_by(F('expiration_date').desc(nulls_last=True), '-purchase_date', '-id')
+                    .first()
+                )
+                if refundable_pack:
+                    refundable_pack.remaining_classes += 1
+                    if not refundable_pack.expiration_date or refundable_pack.expiration_date >= today:
+                        refundable_pack.is_active = True
+                    refundable_pack.save()
                     
             rescheduled_lesson_obj = None
             if status == 'EXCUSED' and reschedule_date and reschedule_start_time and reschedule_end_time:

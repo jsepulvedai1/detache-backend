@@ -243,3 +243,240 @@ class DetacheCoreMutationsAndMediaTests(TestCase):
             if teacher.photo and os.path.exists(teacher.photo.path):
                 os.unlink(teacher.photo.path)
 
+    def test_pack_does_not_rollover_and_expires_independently_exact_scenario(self):
+        from types import SimpleNamespace
+        from dateutil.relativedelta import relativedelta
+
+        today = StudentPack.get_chile_today()
+        student_user = User.objects.create_user(username="alumno_pack", password="pw", email="pack@detache.cl")
+        UserProfile.objects.create(user=student_user, role="ALUMNO")
+        student = Student.objects.create(name="Alumno Pack", email="pack@detache.cl", user=student_user)
+        teacher = Teacher.objects.create(name="Profe Pack")
+
+        # 1) Compra Pack A de 4 clases (1 mes). Verifica creación independiente y vencimiento por relativedelta.
+        initial_purchase = today - datetime.timedelta(days=20)
+        res_pack_a = schema.execute(
+            """
+            mutation($studentId: Int!, $planId: Int!, $purchaseDate: Date) {
+              createStudentPack(studentId: $studentId, planId: $planId, purchaseDate: $purchaseDate) {
+                pack { id totalClasses remainingClasses purchaseDate expirationDate isActive isExpired }
+              }
+            }
+            """,
+            variable_values={
+                "studentId": student.id,
+                "planId": self.plan.id,
+                "purchaseDate": initial_purchase.isoformat(),
+            },
+        )
+        self.assertIsNone(res_pack_a.errors)
+        pack_a_data = res_pack_a.data["createStudentPack"]["pack"]
+        pack_a = StudentPack.objects.get(pk=pack_a_data["id"])
+        self.assertEqual(pack_a.total_classes, 4)
+        self.assertEqual(pack_a.remaining_classes, 4)
+        self.assertEqual(pack_a.expiration_date, initial_purchase + relativedelta(months=1))
+
+        # Ajustar vencimiento de Pack A a mañana (simulando 1 día antes de su vencimiento).
+        d1 = today + datetime.timedelta(days=1)
+        pack_a.expiration_date = d1
+        pack_a.save(update_fields=["expiration_date"])
+
+        # 2) Consume 3 clases del Pack A -> queda 1 clase restante.
+        for idx in range(3):
+            lesson = Lesson.objects.create(
+                teacher=teacher,
+                student=student,
+                room=self.room,
+                date=today - datetime.timedelta(days=idx + 1),
+                start_time=datetime.time(10 + idx, 0),
+                end_time=datetime.time(11 + idx, 0),
+                status="CONFIRMED",
+            )
+            res_complete = schema.execute(
+                "mutation($id: Int!) { updateLessonStatus(lessonId: $id, status: \"COMPLETED\") { success } }",
+                variable_values={"id": lesson.id},
+            )
+            self.assertIsNone(res_complete.errors)
+            self.assertTrue(res_complete.data["updateLessonStatus"]["success"])
+
+        pack_a.refresh_from_db()
+        self.assertEqual(pack_a.remaining_classes, 1)
+
+        # 3) Un día antes de que venza Pack A, compra Pack B de 4 clases (1 mes).
+        res_pack_b = schema.execute(
+            """
+            mutation($studentId: Int!, $planId: Int!, $purchaseDate: Date) {
+              createStudentPack(studentId: $studentId, planId: $planId, purchaseDate: $purchaseDate) {
+                pack { id totalClasses remainingClasses purchaseDate expirationDate isActive isExpired }
+              }
+            }
+            """,
+            variable_values={
+                "studentId": student.id,
+                "planId": self.plan.id,
+                "purchaseDate": today.isoformat(),
+            },
+        )
+        self.assertIsNone(res_pack_b.errors)
+        pack_b = StudentPack.objects.get(pk=res_pack_b.data["createStudentPack"]["pack"]["id"])
+
+        # Deben coexistir 2 packs independientes sin fusionarse ni renovar vencimiento.
+        self.assertEqual(StudentPack.objects.filter(student=student).count(), 2)
+        pack_a.refresh_from_db()
+        self.assertEqual(pack_a.remaining_classes, 1)
+        self.assertEqual(pack_a.expiration_date, d1)
+        self.assertEqual(pack_b.total_classes, 4)
+        self.assertEqual(pack_b.remaining_classes, 4)
+        self.assertEqual(pack_b.expiration_date, today + relativedelta(months=1))
+
+        # 4) Antes de vencer Pack A: el portal del alumno (myPacks) tiene 1 + 4 = 5 créditos vigentes.
+        student_ctx = SimpleNamespace(user=student_user)
+        my_packs_query = "{ myPacks { id totalClasses remainingClasses expirationDate isActive isExpired } }"
+        res_before = schema.execute(my_packs_query, context_value=student_ctx)
+        self.assertIsNone(res_before.errors)
+        packs_before = {int(p["id"]): p for p in res_before.data["myPacks"]}
+        self.assertTrue(packs_before[pack_a.id]["isActive"])
+        self.assertFalse(packs_before[pack_a.id]["isExpired"])
+        self.assertTrue(packs_before[pack_b.id]["isActive"])
+        self.assertFalse(packs_before[pack_b.id]["isExpired"])
+        total_valid_before = sum(
+            p["remainingClasses"] for p in packs_before.values() if p["isActive"] and not p["isExpired"]
+        )
+        self.assertEqual(total_valid_before, 5)
+        self.assertEqual(sum(p.remaining_classes for p in StudentPack.valid_packs_for_student(student)), 5)
+
+        # 5) Al día siguiente (Pack A ya venció ayer): Pack A se desactiva automáticamente y quedan solo 4 créditos.
+        pack_a.expiration_date = today - datetime.timedelta(days=1)
+        pack_a.save(update_fields=["expiration_date"])
+
+        res_after = schema.execute(my_packs_query, context_value=student_ctx)
+        self.assertIsNone(res_after.errors)
+        packs_after = {int(p["id"]): p for p in res_after.data["myPacks"]}
+        self.assertFalse(packs_after[pack_a.id]["isActive"])
+        self.assertTrue(packs_after[pack_a.id]["isExpired"])
+        self.assertEqual(packs_after[pack_a.id]["remainingClasses"], 1)
+        self.assertTrue(packs_after[pack_b.id]["isActive"])
+        self.assertFalse(packs_after[pack_b.id]["isExpired"])
+        total_valid_after = sum(
+            p["remainingClasses"] for p in packs_after.values() if p["isActive"] and not p["isExpired"]
+        )
+        self.assertEqual(total_valid_after, 4)
+        self.assertEqual(sum(p.remaining_classes for p in StudentPack.valid_packs_for_student(student)), 4)
+
+        pack_a.refresh_from_db()
+        self.assertFalse(pack_a.is_active)
+
+        # No se puede descontar manualmente de un pack vencido.
+        res_manual = schema.execute(
+            "mutation($id: Int!) { manualDeductClass(packId: $id) { success error pack { isActive } } }",
+            variable_values={"id": pack_a.id},
+        )
+        self.assertIsNone(res_manual.errors)
+        self.assertFalse(res_manual.data["manualDeductClass"]["success"])
+        self.assertIn("vencido", res_manual.data["manualDeductClass"]["error"].lower())
+
+    def test_pack_fifo_deduction_and_date_aware_scheduling(self):
+        today = StudentPack.get_chile_today()
+        student = Student.objects.create(name="Alumno FIFO")
+        teacher = Teacher.objects.create(name="Profe FIFO")
+
+        pack_a = StudentPack.objects.create(
+            student=student,
+            plan=self.plan,
+            purchase_date=today - datetime.timedelta(days=25),
+            expiration_date=today + datetime.timedelta(days=2),
+        )
+        pack_a.remaining_classes = 1
+        pack_a.save(update_fields=["remaining_classes"])
+
+        pack_b = StudentPack.objects.create(
+            student=student,
+            plan=self.plan,
+            purchase_date=today,
+            expiration_date=today + datetime.timedelta(days=30),
+        )
+
+        create_lesson_mut = """
+        mutation($teacherId: Int!, $studentId: Int!, $roomId: Int!, $date: Date!, $start: Time!, $end: Time!) {
+          createLesson(teacherId: $teacherId, studentId: $studentId, roomId: $roomId, date: $date, startTime: $start, endTime: $end) {
+            lesson { id date status }
+          }
+        }
+        """
+        after_pack_a = today + datetime.timedelta(days=10)
+        for idx in range(4):
+            res_ok = schema.execute(
+                create_lesson_mut,
+                variable_values={
+                    "teacherId": teacher.id,
+                    "studentId": student.id,
+                    "roomId": self.room.id,
+                    "date": after_pack_a.isoformat(),
+                    "start": f"{10 + idx:02d}:00:00",
+                    "end": f"{11 + idx:02d}:00:00",
+                },
+            )
+            self.assertIsNone(res_ok.errors)
+
+        # Una 5ta clase después del vencimiento de Pack A debe fallar, pues el crédito restante de Pack A vence antes.
+        res_fail_after_exp = schema.execute(
+            create_lesson_mut,
+            variable_values={
+                "teacherId": teacher.id,
+                "studentId": student.id,
+                "roomId": self.room.id,
+                "date": after_pack_a.isoformat(),
+                "start": "16:00:00",
+                "end": "17:00:00",
+            },
+        )
+        self.assertIsNotNone(res_fail_after_exp.errors)
+        self.assertIn("vencen antes", str(res_fail_after_exp.errors[0]).lower())
+
+        # Sin embargo, agendar esa 5ta clase antes del vencimiento de Pack A sí debe permitirse.
+        before_pack_a_exp = today + datetime.timedelta(days=1)
+        res_ok_before_exp = schema.execute(
+            create_lesson_mut,
+            variable_values={
+                "teacherId": teacher.id,
+                "studentId": student.id,
+                "roomId": self.room.id,
+                "date": before_pack_a_exp.isoformat(),
+                "start": "12:00:00",
+                "end": "13:00:00",
+            },
+        )
+        self.assertIsNone(res_ok_before_exp.errors)
+        early_lesson_id = int(res_ok_before_exp.data["createLesson"]["lesson"]["id"])
+
+        # Completar la clase temprana descuenta del pack que vence primero (Pack A), no de Pack B.
+        res_complete_early = schema.execute(
+            "mutation($id: Int!) { updateLessonStatus(lessonId: $id, status: \"COMPLETED\") { success } }",
+            variable_values={"id": early_lesson_id},
+        )
+        self.assertIsNone(res_complete_early.errors)
+        self.assertTrue(res_complete_early.data["updateLessonStatus"]["success"])
+        pack_a.refresh_from_db()
+        pack_b.refresh_from_db()
+        self.assertEqual(pack_a.remaining_classes, 0)
+        self.assertEqual(pack_b.remaining_classes, 4)
+
+        # Completar una clase posterior descuenta de Pack B, y revertir a EXCUSED devuelve el crédito a Pack B.
+        later_lesson = Lesson.objects.filter(student=student, date=after_pack_a).order_by("id").first()
+        res_complete_later = schema.execute(
+            "mutation($id: Int!) { updateLessonStatus(lessonId: $id, status: \"COMPLETED\") { success } }",
+            variable_values={"id": later_lesson.id},
+        )
+        self.assertIsNone(res_complete_later.errors)
+        pack_b.refresh_from_db()
+        self.assertEqual(pack_b.remaining_classes, 3)
+
+        res_refund_later = schema.execute(
+            "mutation($id: Int!) { updateLessonStatus(lessonId: $id, status: \"EXCUSED\") { success } }",
+            variable_values={"id": later_lesson.id},
+        )
+        self.assertIsNone(res_refund_later.errors)
+        pack_b.refresh_from_db()
+        self.assertEqual(pack_b.remaining_classes, 4)
+
+

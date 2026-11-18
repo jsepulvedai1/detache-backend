@@ -355,32 +355,54 @@ class StudentPack(models.Model):
     expiration_date = models.DateField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
 
+    @staticmethod
+    def get_chile_today():
+        from zoneinfo import ZoneInfo
+        return timezone.now().astimezone(ZoneInfo("America/Santiago")).date()
+
+    @property
+    def is_expired(self):
+        return bool(self.expiration_date and self.expiration_date < self.get_chile_today())
+
+    @classmethod
+    def deactivate_expired(cls, student=None, today=None):
+        today = today or cls.get_chile_today()
+        qs = cls.objects.filter(is_active=True, expiration_date__lt=today)
+        if student is not None:
+            qs = qs.filter(student=student)
+        return qs.update(is_active=False)
+
+    @classmethod
+    def valid_packs_for_student(cls, student, on_date=None):
+        from django.db.models import F, Q
+        today = cls.get_chile_today()
+        cls.deactivate_expired(student=student, today=today)
+        ref_date = on_date or today
+        return (
+            cls.objects.filter(student=student, is_active=True, remaining_classes__gt=0)
+            .filter(Q(expiration_date__isnull=True) | Q(expiration_date__gte=ref_date))
+            .order_by(F('expiration_date').asc(nulls_last=True), 'purchase_date', 'id')
+        )
+
     def save(self, *args, **kwargs):
         is_new = not self.pk
-        if is_new: # Only on creation
+        if is_new:  # Only on creation
+            import datetime
+            from dateutil.relativedelta import relativedelta
+
+            if self.purchase_date is None:
+                self.purchase_date = self.get_chile_today()
+            elif isinstance(self.purchase_date, datetime.datetime):
+                self.purchase_date = self.purchase_date.date()
+
             self.total_classes = self.plan.classes_count
             self.remaining_classes = self.plan.classes_count
-            
-            # Set expiration_date based on plan duration (in months)
-            from dateutil.relativedelta import relativedelta
+
+            # Each pack maintains its own independent duration and expiration date;
+            # remaining classes from previous packs are never carried over or extended.
             if not self.expiration_date and self.plan.duration:
                 self.expiration_date = self.purchase_date + relativedelta(months=self.plan.duration)
-            
-            # Consolidate previous active packs
-            existing_active_packs = list(StudentPack.objects.filter(student=self.student, is_active=True))
-            rolled_over = sum([p.remaining_classes for p in existing_active_packs])
-            if rolled_over > 0:
-                self.total_classes += rolled_over
-                self.remaining_classes += rolled_over
-                
-            super().save(*args, **kwargs)
-            
-            if existing_active_packs:
-                from .models import Payment
-                Payment.objects.filter(pack__in=existing_active_packs).update(pack=self)
-                StudentPack.objects.filter(id__in=[p.id for p in existing_active_packs]).delete()
-            return
-                
+
         super().save(*args, **kwargs)
 
     def __str__(self):
