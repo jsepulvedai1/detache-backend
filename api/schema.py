@@ -182,7 +182,7 @@ class LeadType(DjangoObjectType):
         return str(self.servicio) if self.servicio else "CLASE_PRUEBA"
 
     def resolve_estado(self, info):
-        return str(self.estado) if self.estado else "PRE_RESERVA"
+        return str(self.estado) if self.estado else "SOLICITUD"
 
 class LeadNoteType(DjangoObjectType):
     class Meta:
@@ -2736,7 +2736,7 @@ class CreatePaymentPreference(graphene.Mutation):
                 item_title = "Pago Clase de Prueba (30 min) - Academia Détaché"
                 item_description = f"Pago de Clase de Prueba diagnóstica ({servicio or 'Música'}) en Academia Détaché"
                 unit_price = trial_price
-                ext_ref = f"lead_id:{lead.id}|plan_id:trial|is_deposit:false"
+                ext_ref = f"lead_id:{lead.id}|plan_id:trial"
                 log_user_action(info, "CREATE_PAYMENT_PREFERENCE", f"Iniciado intento de pago Clase de Prueba (${trial_price}) para lead: {name} (Email: {email})")
             else:
                 plan = Plan.objects.get(pk=plan_id)

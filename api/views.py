@@ -344,36 +344,27 @@ class MercadoPagoWebhookView(View):
                             lead = Lead.objects.get(pk=int(lead_id))
                             
                             if plan_id in ['trial', '0']:
-                                is_deposit = ref_parts.get("is_deposit") == "true"
-                                if is_deposit:
-                                    lead.estado = 'PRE_RESERVA'
-                                    status_desc = "Adelanto / Abono"
-                                else:
-                                    lead.estado = 'RESERVA_CONFIRMADA'
-                                    status_desc = "Pago Total"
+                                # No partial/deposit reservations: any Mercado Pago trial payment is full and immediately confirmed
+                                lead.estado = 'RESERVA_CONFIRMADA'
                                 lead.save()
                                 
                                 lessons_updated = Lesson.objects.filter(lead=lead).update(
                                     status='CONFIRMED',
-                                    is_pre_reservation=is_deposit
+                                    is_pre_reservation=False
                                 )
-                                print(f"Webhook updated {lessons_updated} trial lessons for lead {lead.id} ({status_desc})")
+                                print(f"Webhook updated {lessons_updated} trial lessons for lead {lead.id} (Pago Total Confirmado)")
                                 
                                 existing_payment = Payment.objects.filter(description__icontains=str(payment_id)).first()
                                 if not existing_payment:
                                     from .models import GlobalSettings
                                     gs = GlobalSettings.get_singleton()
-                                    trial_amount = float(transaction_amount) if transaction_amount else (
-                                        float(gs.trial_class_deposit_amount or 8000) if is_deposit else float(gs.trial_class_price or 16000)
-                                    )
+                                    trial_amount = float(transaction_amount) if transaction_amount else float(gs.trial_class_price or 16000)
                                     Payment.objects.create(
                                         amount=trial_amount,
                                         method='CARD',
-                                        description=f"{status_desc} Clase de Prueba (30 min) aprobado por Mercado Pago (ID: {payment_id}) para {lead.nombre}"
+                                        description=f"Pago Total Clase de Prueba (30 min) aprobado por Mercado Pago (ID: {payment_id}) para {lead.nombre}"
                                     )
                                     note_text = (
-                                        f"✅ Adelanto de Clase de Prueba (${int(trial_amount):,}) recibido vía Mercado Pago (Transacción #{payment_id}). Pre-reserva asegurada; saldo se paga en recepción."
-                                        if is_deposit else
                                         f"✅ Pago Total de Clase de Prueba (${int(trial_amount):,}) confirmado vía Mercado Pago (Transacción #{payment_id}). Cupo 100% confirmado."
                                     )
                                     LeadNote.objects.create(
@@ -381,7 +372,7 @@ class MercadoPagoWebhookView(View):
                                         texto=note_text,
                                         autor="Mercado Pago"
                                     )
-                                    print(f"Webhook registered trial class payment ({status_desc}) for lead {lead.nombre}")
+                                    print(f"Webhook registered trial class payment (Pago Total) for lead {lead.nombre}")
                                     
                                     try:
                                         from api.schema import OnLeadUpdated

@@ -143,7 +143,7 @@ class Lead(models.Model):
     ]
     STATUS_CHOICES = [
         ('SOLICITUD', 'Solicitud Recibida'),
-        ('PRE_RESERVA', 'Pre-Reserva (Con Adelanto)'),
+        ('PRE_RESERVA', 'Pendiente de Validación (Transferencia)'),
         ('RESERVA_CONFIRMADA', 'Reserva Confirmada (Pago Total)'),
         ('RESERVA_VENCIDA', 'Reserva Vencida'),
         ('CONTACTADO', 'Contactado / En Seguimiento'),
