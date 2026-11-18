@@ -191,6 +191,10 @@ GRAPHENE = {
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Allow uploads up to 25 MB for PDF scores, audio backing tracks, and images
+DATA_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
+
 # Evolution API Settings
 EVOLUTION_API_URL = os.getenv('EVOLUTION_API_URL', 'http://localhost:8080')
 EVOLUTION_API_KEY = os.getenv('EVOLUTION_API_KEY', 'admin_apikey_123')

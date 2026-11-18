@@ -774,10 +774,16 @@ class CreatePreReservation(graphene.Mutation):
                         fecha=fecha.strftime("%d/%m/%Y") if hasattr(fecha, 'strftime') else str(fecha),
                         hora=hora.strftime("%H:%M") if hasattr(hora, 'strftime') else str(hora)
                     )
+                    from django.conf import settings as django_settings
+                    from_addr = (
+                        getattr(settings, 'smtp_user', None)
+                        or getattr(django_settings, 'DEFAULT_FROM_EMAIL', None)
+                        or "contacto@academiadetache.cl"
+                    )
                     send_mail(
                         subject="Pre-reserva Clase de Prueba - Academia Détaché",
                         message=body,
-                        from_email=settings.smtp_from_email or "contacto@academiadetache.cl",
+                        from_email=from_addr,
                         recipient_list=[email],
                         fail_silently=True
                     )
@@ -956,19 +962,28 @@ class CreateTeacher(graphene.Mutation):
 
         if email and email.strip():
             clean_email = email.strip().lower()
-            username_used = clean_email
+            username_used = clean_email[:150]
             
             existing_user = User.objects.filter(username=username_used).first()
             if not existing_user:
                 existing_user = User.objects.filter(email=clean_email).first()
 
             if existing_user:
-                assigned_user = existing_user
-                user_created = False
+                is_admin_or_student = (
+                    existing_user.is_superuser
+                    or existing_user.is_staff
+                    or hasattr(existing_user, 'student_profile')
+                    or hasattr(existing_user, 'teacher_profile')
+                )
+                if not is_admin_or_student:
+                    assigned_user = existing_user
+                    user_created = False
+                else:
+                    username_used = None
             else:
                 name_parts = name.strip().split(' ', 1)
-                first_name = name_parts[0]
-                last_name = name_parts[1] if len(name_parts) > 1 else ""
+                first_name = name_parts[0][:150]
+                last_name = (name_parts[1] if len(name_parts) > 1 else "")[:150]
 
                 assigned_user = User.objects.create_user(
                     username=username_used,
@@ -979,23 +994,24 @@ class CreateTeacher(graphene.Mutation):
                 )
                 user_created = True
 
-            profile, _ = UserProfile.objects.get_or_create(user=assigned_user)
-            if profile.role not in ['ADMIN', 'SUPERADMIN']:
-                profile.role = 'PROFESOR'
-                profile.allowed_sections = ["DASHBOARD", "CALENDAR", "STUDENTS", "MATERIALS"]
-                profile.save()
+            if assigned_user:
+                profile, _ = UserProfile.objects.get_or_create(user=assigned_user)
+                if profile.role not in ['ADMIN', 'SUPERADMIN']:
+                    profile.role = 'PROFESOR'
+                    profile.allowed_sections = ["DASHBOARD", "CALENDAR", "STUDENTS", "MATERIALS"]
+                    profile.save()
 
-            teacher.user = assigned_user
-            teacher.save()
-            log_user_action(info, "CREATE_TEACHER_ACCOUNT_AUTO", f"Cuenta de portal creada automáticamente para profesor: {teacher.name} (username: {username_used})")
+                teacher.user = assigned_user
+                teacher.save()
+                log_user_action(info, "CREATE_TEACHER_ACCOUNT_AUTO", f"Cuenta de portal creada automáticamente para profesor: {teacher.name} (username: {username_used})")
         elif rut and rut.strip():
-            clean_rut = rut.strip().lower().replace('.', '').replace('-', '')
+            clean_rut = rut.strip().lower().replace('.', '').replace('-', '')[:150]
             username_used = clean_rut
             existing_user = User.objects.filter(username=username_used).first()
             if not existing_user:
                 name_parts = name.strip().split(' ', 1)
-                first_name = name_parts[0]
-                last_name = name_parts[1] if len(name_parts) > 1 else ""
+                first_name = name_parts[0][:150]
+                last_name = (name_parts[1] if len(name_parts) > 1 else "")[:150]
                 assigned_user = User.objects.create_user(
                     username=username_used,
                     password=password_used,
@@ -1085,13 +1101,39 @@ class DeleteTeacher(graphene.Mutation):
 
     def mutate(self, info, id):
         try:
-            teacher = Teacher.objects.get(pk=id)
-            if teacher.user:
+            from django.db import transaction
+            with transaction.atomic():
+                teacher = Teacher.objects.get(pk=id)
+                teacher_name = teacher.name
+
+                # Preserve historical lessons & materials while clearing teacher FK cleanly
+                Lesson.objects.filter(teacher=teacher).update(teacher=None)
+                Material.objects.filter(teacher=teacher).update(teacher=None)
+                teacher.availabilities.all().delete()
+                teacher.specialties.clear()
+                teacher.assigned_students.clear()
+                teacher.class_types.clear()
+
                 u = teacher.user
-                teacher.user = None
-                teacher.save()
-                u.delete()
-            teacher.delete()
+                if u is not None:
+                    teacher.user = None
+                    teacher.save(update_fields=['user'])
+
+                    is_protected_account = (
+                        u.is_superuser
+                        or u.is_staff
+                        or hasattr(u, 'student_profile')
+                        or UserProfile.objects.filter(
+                            user=u, role__in=['ADMIN', 'SUPERADMIN', 'VENTAS', 'RECEPCION']
+                        ).exists()
+                    )
+                    if not is_protected_account:
+                        AcademyTask.objects.filter(assigned_user=u).update(assigned_user=None)
+                        AuditLog.objects.filter(user=u).update(user=None)
+                        u.delete()
+
+                teacher.delete()
+                log_user_action(info, "DELETE_TEACHER", f"Eliminado profesor: {teacher_name} (ID: {id})")
             return DeleteTeacher(success=True)
         except Teacher.DoesNotExist:
             return DeleteTeacher(success=False, error="Profesor no encontrado.")
@@ -1166,6 +1208,15 @@ class DeleteAvailability(graphene.Mutation):
             log_user_action(info, "DELETE_AVAILABILITY", f"Horario eliminado para profesor {teacher_name}: {av_info}")
         return DeleteAvailability(success=True)
 
+def _clean_optional_str(val, max_len=None):
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    return s[:max_len] if max_len else s
+
+
 class CreateStudent(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
@@ -1181,25 +1232,36 @@ class CreateStudent(graphene.Mutation):
         assigned_teacher_ids = graphene.List(graphene.Int)
 
     student = graphene.Field(StudentType)
+    success = graphene.Boolean()
+    error = graphene.String()
 
     def mutate(self, info, name, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status="ACTIVE", phone_number=None, level="BEGINNER", primary_instrument_id=None, assigned_teacher_ids=None):
+        clean_name = (name or "").strip()
+        if not clean_name:
+            raise Exception("El nombre del alumno es obligatorio.")
+
         primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first() if primary_instrument_id else None
+        clean_status = status if status in ['ACTIVE', 'INACTIVE', 'ON_HOLD'] else 'ACTIVE'
+        clean_level = level if level in ['BEGINNER', 'INTERMEDIATE', 'ADVANCED'] else 'BEGINNER'
+
         student = Student.objects.create(
-            name=name,
-            email=email,
-            rut=rut,
+            name=clean_name[:255],
+            email=_clean_optional_str(email, 254),
+            rut=_clean_optional_str(rut, 20),
             birth_date=birth_date,
-            guardian_name=guardian_name,
-            guardian_phone=guardian_phone,
-            status=status,
-            phone_number=phone_number,
-            level=level,
+            guardian_name=_clean_optional_str(guardian_name, 255),
+            guardian_phone=_clean_optional_str(guardian_phone, 20),
+            status=clean_status,
+            phone_number=_clean_optional_str(phone_number, 20),
+            level=clean_level,
             primary_instrument=primary_instrument
         )
         if assigned_teacher_ids:
-            student.assigned_teachers.set(Teacher.objects.filter(pk__in=assigned_teacher_ids))
+            valid_teacher_ids = [int(tid) for tid in assigned_teacher_ids if tid is not None]
+            if valid_teacher_ids:
+                student.assigned_teachers.set(Teacher.objects.filter(pk__in=valid_teacher_ids))
         log_user_action(info, "CREATE_STUDENT", f"Registrado nuevo estudiante: {student.name} (ID: {student.id})")
-        return CreateStudent(student=student)
+        return CreateStudent(student=student, success=True)
 
 class UpdateStudent(graphene.Mutation):
     class Arguments:
@@ -1218,29 +1280,32 @@ class UpdateStudent(graphene.Mutation):
         assigned_teacher_ids = graphene.List(graphene.Int)
 
     student = graphene.Field(StudentType)
+    success = graphene.Boolean()
+    error = graphene.String()
 
     def mutate(self, info, id, name=None, email=None, rut=None, birth_date=None, guardian_name=None, guardian_phone=None, status=None, return_date=None, phone_number=None, level=None, primary_instrument_id=None, assigned_teacher_ids=None):
         try:
             student = Student.objects.get(pk=id)
-            if name is not None: student.name = name
-            if email is not None: student.email = email
-            if rut is not None: student.rut = rut
+            if name is not None and name.strip(): student.name = name.strip()[:255]
+            if email is not None: student.email = _clean_optional_str(email, 254)
+            if rut is not None: student.rut = _clean_optional_str(rut, 20)
             if birth_date is not None: student.birth_date = birth_date
-            if guardian_name is not None: student.guardian_name = guardian_name
-            if guardian_phone is not None: student.guardian_phone = guardian_phone
-            if status is not None: student.status = status
+            if guardian_name is not None: student.guardian_name = _clean_optional_str(guardian_name, 255)
+            if guardian_phone is not None: student.guardian_phone = _clean_optional_str(guardian_phone, 20)
+            if status is not None and status in ['ACTIVE', 'INACTIVE', 'ON_HOLD']: student.status = status
             if return_date is not None: student.return_date = return_date
-            if phone_number is not None: student.phone_number = phone_number
-            if level is not None: student.level = level
+            if phone_number is not None: student.phone_number = _clean_optional_str(phone_number, 20)
+            if level is not None and level in ['BEGINNER', 'INTERMEDIATE', 'ADVANCED']: student.level = level
             if primary_instrument_id is not None:
-                student.primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first()
+                student.primary_instrument = Instrument.objects.filter(pk=primary_instrument_id).first() if primary_instrument_id > 0 else None
             if assigned_teacher_ids is not None:
-                student.assigned_teachers.set(Teacher.objects.filter(pk__in=assigned_teacher_ids))
+                valid_teacher_ids = [int(tid) for tid in assigned_teacher_ids if tid is not None]
+                student.assigned_teachers.set(Teacher.objects.filter(pk__in=valid_teacher_ids))
             student.save()
             log_user_action(info, "UPDATE_STUDENT", f"Actualizada ficha del estudiante: {student.name} (ID: {student.id})")
-            return UpdateStudent(student=student)
+            return UpdateStudent(student=student, success=True)
         except Student.DoesNotExist:
-            return UpdateStudent(student=None)
+            return UpdateStudent(student=None, success=False, error="Alumno no encontrado.")
 
 class UpdateGlobalSettings(graphene.Mutation):
     class Arguments:
@@ -1421,18 +1486,31 @@ class CreateLead(graphene.Mutation):
             except Exception as e:
                 print(f"Error parsing email details in CreateLead: {e}")
 
-        lead_email = parsed_res['email'] if parsed_res else email
+        raw_contact_tail = None
+        if parsed_res:
+            lead_email = parsed_res['email']
+        elif email and "|" in email:
+            lead_email = email.split("|", 1)[0].strip()
+            raw_contact_tail = email.split("|", 1)[1].strip()
+        else:
+            lead_email = email
 
         lead = Lead.objects.create(
-            nombre=nombre,
-            telefono=telefono,
-            email=lead_email,
+            nombre=(nombre or "")[:255],
+            telefono=(telefono or "")[:20],
+            email=_clean_optional_str(lead_email, 254),
             edad=edad,
-            apoderado_nombre=apoderado_nombre,
-            servicio=servicio,
-            fuente=fuente,
+            apoderado_nombre=_clean_optional_str(apoderado_nombre, 255),
+            servicio=(servicio or "CLASE_PRUEBA")[:100],
+            fuente=(fuente or "WEB")[:100],
             estado='SOLICITUD'
         )
+        if raw_contact_tail:
+            LeadNote.objects.create(
+                lead=lead,
+                texto=raw_contact_tail,
+                autor="Formulario Contacto Web"
+            )
 
         if parsed_res:
             try:
@@ -1531,11 +1609,13 @@ class ConvertLeadToStudent(graphene.Mutation):
                 elif 'CONTRABAJO' in svc_upper or 'BAJO' in svc_upper:
                     matched_instrument = Instrument.objects.filter(name__icontains='Bajo').first() or Instrument.objects.filter(name__icontains='Contrabajo').first()
 
+            raw_email = (lead.email or "").split("|", 1)[0].strip()
+            clean_email = _clean_optional_str(raw_email, 254)
             student = Student.objects.create(
-                name=lead.nombre,
-                email=lead.email,
-                phone_number=lead.telefono,
-                guardian_name=lead.apoderado_nombre,
+                name=(lead.nombre or "Alumno")[:255],
+                email=clean_email,
+                phone_number=_clean_optional_str(lead.telefono, 20),
+                guardian_name=_clean_optional_str(lead.apoderado_nombre, 255),
                 primary_instrument=matched_instrument,
                 status='ACTIVE'
             )
@@ -1936,14 +2016,23 @@ class DeletePlan(graphene.Mutation):
         id = graphene.Int(required=True)
 
     success = graphene.Boolean()
+    error = graphene.String()
 
     def mutate(self, info, id):
+        from django.db.models.deletion import RestrictedError
         try:
             plan = Plan.objects.get(pk=id)
             plan.delete()
             return DeletePlan(success=True)
         except Plan.DoesNotExist:
-            return DeletePlan(success=False)
+            return DeletePlan(success=False, error="Plan no encontrado.")
+        except RestrictedError:
+            return DeletePlan(
+                success=False,
+                error="No se puede eliminar este plan porque hay alumnos con packs asociados a él."
+            )
+        except Exception as e:
+            return DeletePlan(success=False, error=str(e))
 
 class UpdatePlan(graphene.Mutation):
     class Arguments:
@@ -2987,15 +3076,17 @@ class CreateStudentAccount(graphene.Mutation):
             return CreateStudentAccount(success=False, error="Alumno no encontrado.")
         if student.user:
             return CreateStudentAccount(success=False, error="Este alumno ya tiene una cuenta de portal.")
-        username = student.rut or student.email or f"alumno_{student.id}"
-        username = username.strip().lower().replace(' ', '_')
+        username = (student.rut or student.email or f"alumno_{student.id}").strip().lower().replace(' ', '_')[:150]
         if User.objects.filter(username=username).exists():
             return CreateStudentAccount(success=False, error=f"El username '{username}' ya existe. Verifica el RUT o correo del alumno.")
-        user = User.objects.create_user(username=username, password=password, email=student.email or '')
-        student.user = user
-        student.save()
-        log_user_action(info, "CREATE_STUDENT_ACCOUNT", f"Cuenta de portal creada para alumno: {student.name} (username: {username})")
-        return CreateStudentAccount(success=True)
+        try:
+            user = User.objects.create_user(username=username, password=password, email=(student.email or '')[:254])
+            student.user = user
+            student.save()
+            log_user_action(info, "CREATE_STUDENT_ACCOUNT", f"Cuenta de portal creada para alumno: {student.name} (username: {username})")
+            return CreateStudentAccount(success=True)
+        except Exception as e:
+            return CreateStudentAccount(success=False, error=f"No se pudo crear la cuenta: {str(e)}")
 
 
 class CreateTeacherAccount(graphene.Mutation):
@@ -3013,15 +3104,17 @@ class CreateTeacherAccount(graphene.Mutation):
             return CreateTeacherAccount(success=False, error="Profesor no encontrado.")
         if teacher.user:
             return CreateTeacherAccount(success=False, error="Este profesor ya tiene una cuenta de portal.")
-        username = teacher.rut or teacher.email or f"profesor_{teacher.id}"
-        username = username.strip().lower().replace(' ', '_')
+        username = (teacher.rut or teacher.email or f"profesor_{teacher.id}").strip().lower().replace(' ', '_')[:150]
         if User.objects.filter(username=username).exists():
             return CreateTeacherAccount(success=False, error=f"El username '{username}' ya existe. Verifica el RUT o correo del profesor.")
-        user = User.objects.create_user(username=username, password=password, email=teacher.email or '')
-        teacher.user = user
-        teacher.save()
-        log_user_action(info, "CREATE_TEACHER_ACCOUNT", f"Cuenta de portal creada para profesor: {teacher.name} (username: {username})")
-        return CreateTeacherAccount(success=True)
+        try:
+            user = User.objects.create_user(username=username, password=password, email=(teacher.email or '')[:254])
+            teacher.user = user
+            teacher.save()
+            log_user_action(info, "CREATE_TEACHER_ACCOUNT", f"Cuenta de portal creada para profesor: {teacher.name} (username: {username})")
+            return CreateTeacherAccount(success=True)
+        except Exception as e:
+            return CreateTeacherAccount(success=False, error=f"No se pudo crear la cuenta: {str(e)}")
 
 
 class ResetPortalPassword(graphene.Mutation):

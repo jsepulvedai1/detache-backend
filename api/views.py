@@ -212,8 +212,8 @@ class TeacherPhotoUploadView(View):
             
             from .models import Teacher
             try:
-                teacher = Teacher.objects.get(pk=teacher_id)
-            except Teacher.DoesNotExist:
+                teacher = Teacher.objects.get(pk=int(teacher_id))
+            except (Teacher.DoesNotExist, ValueError, TypeError):
                 return JsonResponse({"status": "ERROR", "message": f"Teacher with id {teacher_id} does not exist"}, status=404)
             
             # Save the photo
@@ -221,9 +221,15 @@ class TeacherPhotoUploadView(View):
             teacher.save()
             
             photo_url = teacher.photo.url if teacher.photo else None
+            full_url = request.build_absolute_uri(photo_url) if photo_url else None
+            if full_url and request.META.get('HTTP_X_FORWARDED_PROTO') == 'https' and full_url.startswith('http://'):
+                full_url = full_url.replace('http://', 'https://', 1)
+
             return JsonResponse({
                 "status": "SUCCESS", 
-                "photoUrl": photo_url
+                "photoUrl": photo_url,
+                "url": full_url or photo_url,
+                "relativeUrl": photo_url
             })
         except Exception as e:
             return JsonResponse({"status": "ERROR", "message": str(e)}, status=500)
@@ -241,11 +247,13 @@ class MediaUploadView(View):
             from django.core.files.base import ContentFile
             import uuid
             import os
+            import re
 
-            folder = request.POST.get('folder', 'materials')
-            ext = os.path.splitext(upload_file.name)[1]
+            raw_folder = request.POST.get('folder', 'materials') or 'materials'
+            folder = re.sub(r'[^a-zA-Z0-9_-]', '', raw_folder) or 'materials'
+            ext = os.path.splitext(upload_file.name)[1].lower()
             original_base = os.path.splitext(upload_file.name)[0][:30]
-            clean_base = "".join([c if c.isalnum() or c in ('-', '_') else '_' for c in original_base])
+            clean_base = "".join([c if c.isalnum() or c in ('-', '_') else '_' for c in original_base]) or 'archivo'
             filename = f"{clean_base}_{uuid.uuid4().hex[:8]}{ext}"
             
             # Save under media/{folder}/

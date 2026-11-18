@@ -32,8 +32,15 @@ urlpatterns = [
 ]
 
 from django.views.static import serve
+from django.views.decorators.clickjacking import xframe_options_exempt
 from django.urls import re_path
 
+
+@xframe_options_exempt
+def serve_media(request, path):
+    return serve(request, path, document_root=settings.MEDIA_ROOT)
+
+
 urlpatterns += [
-    re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+    re_path(r'^media/(?P<path>.*)$', serve_media),
 ]

@@ -325,7 +325,8 @@ class Lesson(models.Model):
 
     def __str__(self):
         student_name = self.student.name if self.student else (self.lead.nombre if self.lead else "No student/lead")
-        return f"{self.lesson_type} - {student_name} with {self.teacher.name} on {self.date}"
+        teacher_name = self.teacher.name if self.teacher else "Sin profesor"
+        return f"{self.lesson_type} - {student_name} with {teacher_name} on {self.date}"
 
 # ─── BILLING & PACKS ───
 class Plan(models.Model):
